@@ -17,22 +17,30 @@ export const BIBLE_BOOKS = [
 ];
 
 export interface Member {
-  id: number;
-  room_code: string;
-  name: string;
-  avatar_url: string | null;
-  last_read_at: string | null;
+  uid: string;
+  displayName: string;
+  photoURL: string | null;
+  role: 'admin' | 'member';
+  status: 'pending' | 'approved';
+  joinedAt: string;
+  lastReadAt: string | null;
 }
 
 export interface ReadingLog {
-  id: number;
-  member_id: number;
-  member_name: string;
-  member_avatar: string | null;
-  room_code: string;
+  id: string;
+  memberUid: string;
+  memberName: string;
+  memberPhoto: string | null;
   book: string;
   chapter: number;
-  read_at: string;
-  confirmed_by_id: number | null;
-  confirmer_name: string | null;
+  readAt: string;
+  confirmedByUid: string | null;
+  confirmerName: string | null;
+}
+
+export interface FamilyGroup {
+  id: string;
+  name: string;
+  adminUid: string;
+  createdAt: string;
 }

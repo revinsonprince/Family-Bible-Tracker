@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "FamilyGroup": {
+      "title": "Family Group",
+      "description": "A group of family members tracking their Bible reading together.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the family group." },
+        "adminUid": { "type": "string", "description": "The UID of the user who created the group." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "adminUid", "createdAt"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A member of a family group.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "status": { "type": "string", "enum": ["pending", "approved"] },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["displayName", "role", "status", "joinedAt"]
+    },
+    "ReadingLog": {
+      "title": "Reading Log",
+      "description": "A record of a Bible chapter read by a member.",
+      "type": "object",
+      "properties": {
+        "memberUid": { "type": "string" },
+        "memberName": { "type": "string" },
+        "memberPhoto": { "type": "string" },
+        "book": { "type": "string" },
+        "chapter": { "type": "number" },
+        "readAt": { "type": "string", "format": "date-time" },
+        "confirmedByUid": { "type": "string" },
+        "confirmerName": { "type": "string" }
+      },
+      "required": ["memberUid", "memberName", "book", "chapter", "readAt"]
+    }
+  },
+  "firestore": {
+    "/groups/{groupId}": {
+      "schema": "FamilyGroup",
+      "description": "Top-level family group information."
+    },
+    "/groups/{groupId}/members/{memberUid}": {
+      "schema": "Member",
+      "description": "Members within a specific family group."
+    },
+    "/groups/{groupId}/logs/{logId}": {
+      "schema": "ReadingLog",
+      "description": "Reading logs for a specific family group."
+    }
+  }
+}

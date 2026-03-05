@@ -13,13 +13,37 @@ import {
   Book,
   Camera,
   Sparkles,
-  Loader2
+  Loader2,
+  Settings,
+  Shield,
+  UserPlus,
+  LogIn
 } from 'lucide-react';
 import { format, formatDistanceToNow, isToday } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { BIBLE_BOOKS, type Member, type ReadingLog } from './types';
+import { BIBLE_BOOKS, type Member, type ReadingLog, type FamilyGroup } from './types';
 import { GoogleGenAI } from "@google/genai";
+import { auth, db, signInWithGoogle, logout } from './firebase';
+import { 
+  onAuthStateChanged, 
+  User 
+} from 'firebase/auth';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  limit, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc,
+  serverTimestamp,
+  Timestamp
+} from 'firebase/firestore';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -28,173 +52,228 @@ function cn(...inputs: ClassValue[]) {
 }
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(localStorage.getItem('roomCode'));
-  const [member, setMember] = useState<Member | null>(JSON.parse(localStorage.getItem('member') || 'null'));
-  const [nameInput, setNameInput] = useState('');
-  const [codeInput, setCodeInput] = useState('');
-  
+  const [group, setGroup] = useState<FamilyGroup | null>(null);
+  const [member, setMember] = useState<Member | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [logs, setLogs] = useState<ReadingLog[]>([]);
-  const [view, setView] = useState<'feed' | 'dashboard'>('feed');
+  
+  const [view, setView] = useState<'feed' | 'dashboard' | 'members'>('feed');
   const [isLogging, setIsLogging] = useState(false);
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [codeInput, setCodeInput] = useState('');
   const [selectedBook, setSelectedBook] = useState('Genesis');
   const [chapter, setChapter] = useState('1');
 
-  const fetchState = useCallback(async (code: string) => {
-    try {
-      const res = await fetch(`/api/rooms/${code}/state`);
-      const data = await res.json();
-      setMembers(data.members);
-      setLogs(data.logs);
-    } catch (err) {
-      console.error('Failed to fetch state', err);
-    }
+  // Auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
   }, []);
 
+  // Sync with Firestore
   useEffect(() => {
-    if (roomCode) {
-      fetchState(roomCode);
-      
-      let ws: WebSocket | null = null;
-      let reconnectTimer: number | null = null;
+    if (!user || !roomCode) return;
 
-      const connect = () => {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${protocol}//${window.location.host}?roomCode=${roomCode}`);
-        
-        ws.onopen = () => {
-          setIsConnected(true);
-          console.log('WebSocket connected');
-        };
-
-        ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.type === 'NEW_LOG') {
-            setLogs(prev => [data.log, ...prev]);
-            setMembers(prev => prev.map(m => 
-              m.id === data.log.member_id ? { ...m, last_read_at: data.log.read_at } : m
-            ));
-          } else if (data.type === 'LOG_CONFIRMED') {
-            setLogs(prev => prev.map(l => l.id === data.log.id ? data.log : l));
-          } else if (data.type === 'MEMBER_UPDATED') {
-            setMembers(prev => prev.map(m => m.id === data.member.id ? data.member : m));
-            setLogs(prev => prev.map(l => l.member_id === data.member.id ? { ...l, member_avatar: data.member.avatar_url } : l));
-            if (member && data.member.id === member.id) {
-              setMember(data.member);
-              localStorage.setItem('member', JSON.stringify(data.member));
-            }
-          }
-        };
-
-        ws.onclose = () => {
-          setIsConnected(false);
-          console.log('WebSocket disconnected, retrying...');
-          reconnectTimer = window.setTimeout(connect, 3000);
-        };
-
-        ws.onerror = (err) => {
-          console.error('WebSocket error', err);
-          ws?.close();
-        };
-      };
-
-      connect();
-
-      return () => {
-        if (ws) ws.close();
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-      };
-    }
-  }, [roomCode, fetchState]);
-
-  const handleJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nameInput || !codeInput) return;
-
-    const res = await fetch('/api/rooms/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: codeInput.toUpperCase(), name: nameInput }),
+    // Group info
+    const groupRef = doc(db, 'groups', roomCode);
+    const unsubGroup = onSnapshot(groupRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setGroup({ id: docSnap.id, ...docSnap.data() } as FamilyGroup);
+      } else {
+        setRoomCode(null);
+        localStorage.removeItem('roomCode');
+      }
     });
-    const data = await res.json();
-    
-    setRoomCode(data.room_code);
-    setMember(data.member);
-    localStorage.setItem('roomCode', data.room_code);
-    localStorage.setItem('member', JSON.stringify(data.member));
+
+    // Member info
+    const memberRef = doc(db, 'groups', roomCode, 'members', user.uid);
+    const unsubMember = onSnapshot(memberRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setMember({ uid: docSnap.id, ...docSnap.data() } as Member);
+      }
+    });
+
+    // Members list
+    const membersRef = collection(db, 'groups', roomCode, 'members');
+    const unsubMembers = onSnapshot(membersRef, (snap) => {
+      const mList = snap.docs.map(d => ({ uid: d.id, ...d.data() } as Member));
+      setMembers(mList);
+    });
+
+    // Logs list
+    const logsRef = collection(db, 'groups', roomCode, 'logs');
+    const q = query(logsRef, orderBy('readAt', 'desc'), limit(50));
+    const unsubLogs = onSnapshot(q, (snap) => {
+      const lList = snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          readAt: (data.readAt as Timestamp)?.toDate().toISOString() || new Date().toISOString()
+        } as ReadingLog;
+      });
+      setLogs(lList);
+    });
+
+    return () => {
+      unsubGroup();
+      unsubMember();
+      unsubMembers();
+      unsubLogs();
+    };
+  }, [user, roomCode]);
+
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !groupNameInput) return;
+    setIsCreating(true);
+
+    try {
+      const gCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const groupRef = doc(db, 'groups', gCode);
+      
+      await setDoc(groupRef, {
+        name: groupNameInput,
+        adminUid: user.uid,
+        createdAt: serverTimestamp()
+      });
+
+      await setDoc(doc(db, 'groups', gCode, 'members', user.uid), {
+        displayName: user.displayName || 'Anonymous',
+        photoURL: user.photoURL,
+        role: 'admin',
+        status: 'approved',
+        joinedAt: serverTimestamp(),
+        lastReadAt: null
+      });
+
+      setRoomCode(gCode);
+      localStorage.setItem('roomCode', gCode);
+    } catch (err) {
+      console.error('Failed to create group', err);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('roomCode');
-    localStorage.removeItem('member');
-    setRoomCode(null);
-    setMember(null);
+  const handleJoinGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !codeInput) return;
+    setIsJoining(true);
+
+    try {
+      const groupRef = doc(db, 'groups', codeInput.toUpperCase());
+      const gSnap = await getDoc(groupRef);
+      
+      if (!gSnap.exists()) {
+        alert('Group not found');
+        return;
+      }
+
+      await setDoc(doc(db, 'groups', codeInput.toUpperCase(), 'members', user.uid), {
+        displayName: user.displayName || 'Anonymous',
+        photoURL: user.photoURL,
+        role: 'member',
+        status: 'pending',
+        joinedAt: serverTimestamp(),
+        lastReadAt: null
+      });
+
+      setRoomCode(codeInput.toUpperCase());
+      localStorage.setItem('roomCode', codeInput.toUpperCase());
+    } catch (err) {
+      console.error('Failed to join group', err);
+    } finally {
+      setIsJoining(false);
+    }
   };
 
   const handleLogReading = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!member || !roomCode) return;
+    if (!user || !roomCode || !member) return;
 
-    await fetch('/api/logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        memberId: member.id,
-        roomCode,
+    try {
+      const logsRef = collection(db, 'groups', roomCode, 'logs');
+      await addDoc(logsRef, {
+        memberUid: user.uid,
+        memberName: member.displayName,
+        memberPhoto: member.photoURL,
         book: selectedBook,
-        chapter: parseInt(chapter)
-      }),
-    });
-    setIsLogging(false);
-  };
-
-  const handleConfirm = async (logId: number) => {
-    if (!member || !roomCode) return;
-    await fetch(`/api/logs/${logId}/confirm`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmerId: member.id, roomCode }),
-    });
-  };
-
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !member || !roomCode) return;
-
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64 = reader.result as string;
-      await fetch(`/api/members/${member.id}/avatar`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ avatarUrl: base64, roomCode }),
+        chapter: parseInt(chapter),
+        readAt: serverTimestamp(),
+        confirmedByUid: null,
+        confirmerName: null
       });
-      setIsUpdatingAvatar(false);
-    };
-    reader.readAsDataURL(file);
+
+      await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+        lastReadAt: serverTimestamp()
+      });
+
+      setIsLogging(false);
+    } catch (err) {
+      console.error('Failed to log reading', err);
+    }
+  };
+
+  const handleConfirm = async (logId: string) => {
+    if (!user || !roomCode || !member) return;
+    try {
+      const logRef = doc(db, 'groups', roomCode, 'logs', logId);
+      await updateDoc(logRef, {
+        confirmedByUid: user.uid,
+        confirmerName: member.displayName
+      });
+    } catch (err) {
+      console.error('Failed to confirm log', err);
+    }
+  };
+
+  const handleApproveMember = async (memberUid: string) => {
+    if (!user || !roomCode || member?.role !== 'admin') return;
+    try {
+      const memberRef = doc(db, 'groups', roomCode, 'members', memberUid);
+      await updateDoc(memberRef, {
+        status: 'approved'
+      });
+    } catch (err) {
+      console.error('Failed to approve member', err);
+    }
+  };
+
+  const handleRejectMember = async (memberUid: string) => {
+    if (!user || !roomCode || member?.role !== 'admin') return;
+    try {
+      const memberRef = doc(db, 'groups', roomCode, 'members', memberUid);
+      await deleteDoc(memberRef);
+    } catch (err) {
+      console.error('Failed to reject member', err);
+    }
   };
 
   const generateAvatar = async () => {
-    if (!member || !roomCode) return;
+    if (!user || !roomCode || !member) return;
     setIsGeneratingAvatar(true);
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: {
-          parts: [{ text: `A minimalist, warm, hand-drawn style avatar for a person named ${member.name}. The style should be organic, soft, and friendly, using a palette of olive greens and creams to match a Bible study app theme. No text, just the character.` }]
+          parts: [{ text: `A minimalist, warm, hand-drawn style avatar for a person named ${member.displayName}. The style should be organic, soft, and friendly, using a palette of olive greens and creams to match a Bible study app theme. No text, just the character.` }]
         }
       });
 
       for (const part of response.candidates[0].content.parts) {
         if (part.inlineData) {
           const base64 = `data:image/png;base64,${part.inlineData.data}`;
-          await fetch(`/api/members/${member.id}/avatar`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ avatarUrl: base64, roomCode }),
+          await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+            photoURL: base64
           });
           break;
         }
@@ -205,6 +284,21 @@ export default function App() {
       setIsGeneratingAvatar(false);
       setIsUpdatingAvatar(false);
     }
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !roomCode) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+        photoURL: base64
+      });
+      setIsUpdatingAvatar(false);
+    };
+    reader.readAsDataURL(file);
   };
 
   const Avatar = ({ url, name, className }: { url: string | null, name: string, className?: string }) => {
@@ -220,12 +314,12 @@ export default function App() {
     }
     return (
       <div className={cn("rounded-full flex items-center justify-center text-white font-bold", className)}>
-        {name[0].toUpperCase()}
+        {name ? name[0].toUpperCase() : '?'}
       </div>
     );
   };
 
-  if (!roomCode || !member) {
+  if (!user) {
     return (
       <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6 font-serif">
         <motion.div 
@@ -241,40 +335,235 @@ export default function App() {
             <p className="text-[#5A5A40]/70 italic">Encouraging each other in the Word</p>
           </div>
 
-          <form onSubmit={handleJoin} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-[#1a1a1a] mb-2 uppercase tracking-widest">Your Name</label>
-              <input 
-                type="text" 
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                className="w-full px-4 py-3 rounded-2xl border border-[#e5e2dd] focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 bg-[#fcfbf9]"
-                placeholder="e.g. John Doe"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-[#1a1a1a] mb-2 uppercase tracking-widest">Family Room Code</label>
-              <input 
-                type="text" 
-                value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-                className="w-full px-4 py-3 rounded-2xl border border-[#e5e2dd] focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 bg-[#fcfbf9] font-mono"
-                placeholder="ROOM123"
-                required
-              />
-            </div>
+          <div className="space-y-4">
             <button 
-              type="submit"
-              className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-medium hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95"
+              onClick={signInWithGoogle}
+              className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-medium hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3"
             >
-              Enter Family Room
+              <LogIn className="w-5 h-5" />
+              Sign in with Google
             </button>
-          </form>
+            <p className="text-center text-xs text-[#5A5A40]/60 px-4">
+              Join your family group and start tracking your reading journey together.
+            </p>
+          </div>
         </motion.div>
       </div>
     );
   }
+
+  if (!roomCode || !member) {
+    return (
+      <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6 font-serif">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full bg-white rounded-[32px] p-10 shadow-xl border border-[#e5e2dd]"
+        >
+          <div className="flex flex-col items-center mb-8 text-center">
+            <div className="w-12 h-12 bg-[#5A5A40] rounded-full flex items-center justify-center mb-4">
+              <Users className="text-white w-6 h-6" />
+            </div>
+            <h1 className="text-2xl font-bold text-[#1a1a1a]">Welcome, {user.displayName}</h1>
+            <p className="text-[#5A5A40]/70 italic text-sm">Join or create a family group</p>
+          </div>
+
+          <div className="space-y-8">
+            <form onSubmit={handleJoinGroup} className="space-y-4">
+              <label className="block text-xs font-bold uppercase tracking-widest text-[#5A5A40]/60">Join Existing Group</label>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                  className="flex-1 px-4 py-3 rounded-2xl border border-[#e5e2dd] focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 bg-[#fcfbf9] font-mono"
+                  placeholder="ROOM123"
+                  required
+                />
+                <button 
+                  type="submit"
+                  disabled={isJoining}
+                  className="bg-[#5A5A40] text-white px-6 py-3 rounded-2xl font-bold hover:bg-[#4a4a34] transition-all disabled:opacity-50"
+                >
+                  {isJoining ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Join'}
+                </button>
+              </div>
+            </form>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-[#e5e2dd]"></span></div>
+              <div className="relative flex justify-center text-xs uppercase tracking-widest"><span className="bg-white px-2 text-[#5A5A40]/40">Or</span></div>
+            </div>
+
+            <form onSubmit={handleCreateGroup} className="space-y-4">
+              <label className="block text-xs font-bold uppercase tracking-widest text-[#5A5A40]/60">Create New Group</label>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={groupNameInput}
+                  onChange={(e) => setGroupNameInput(e.target.value)}
+                  className="flex-1 px-4 py-3 rounded-2xl border border-[#e5e2dd] focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 bg-[#fcfbf9]"
+                  placeholder="Family Name"
+                  required
+                />
+                <button 
+                  type="submit"
+                  disabled={isCreating}
+                  className="bg-[#5A5A40] text-white px-6 py-3 rounded-2xl font-bold hover:bg-[#4a4a34] transition-all disabled:opacity-50"
+                >
+                  {isCreating ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Create'}
+                </button>
+              </div>
+            </form>
+
+            <button 
+              onClick={logout}
+              className="w-full text-[#5A5A40]/60 text-xs font-bold uppercase tracking-widest hover:text-[#5A5A40] transition-colors"
+            >
+              Sign Out
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (member.status === 'pending') {
+    return (
+      <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6 font-serif">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full bg-white rounded-[32px] p-10 shadow-xl border border-[#e5e2dd] text-center"
+        >
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Clock className="text-amber-600 w-8 h-8 animate-pulse" />
+          </div>
+          <h1 className="text-2xl font-bold text-[#1a1a1a] mb-2">Waiting for Approval</h1>
+          <p className="text-[#5A5A40]/70 mb-8">
+            Your request to join <span className="font-bold text-[#5A5A40]">{group?.name || 'the group'}</span> is pending. 
+            An admin needs to authorize your entry.
+          </p>
+          <div className="bg-[#fcfbf9] p-4 rounded-2xl border border-[#e5e2dd] mb-8">
+            <p className="text-xs uppercase tracking-widest font-bold text-[#5A5A40]/40 mb-1">Room Code</p>
+            <p className="text-xl font-mono font-bold text-[#5A5A40]">{roomCode}</p>
+          </div>
+          <button 
+            onClick={() => {
+              setRoomCode(null);
+              localStorage.removeItem('roomCode');
+            }}
+            className="text-[#5A5A40]/60 text-xs font-bold uppercase tracking-widest hover:text-[#5A5A40] transition-colors"
+          >
+            Cancel Request
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  const MembersView = () => {
+    const approvedMembers = members.filter(m => m.status === 'approved');
+    const pendingMembers = members.filter(m => m.status === 'pending');
+
+    return (
+      <div className="space-y-6">
+        {member?.role === 'admin' && pendingMembers.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-amber-600 font-sans px-2">
+              <Bell className="w-3 h-3" />
+              Pending Requests ({pendingMembers.length})
+            </h3>
+            <div className="bg-amber-50 rounded-[32px] p-6 border border-amber-200 space-y-4">
+              {pendingMembers.map(m => (
+                <div key={m.uid} className="flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-amber-100">
+                  <div className="flex items-center gap-4">
+                    <Avatar url={m.photoURL} name={m.displayName} className="w-12 h-12 bg-amber-200" />
+                    <div>
+                      <p className="font-bold text-lg">{m.displayName}</p>
+                      <p className="text-xs text-amber-700/60 italic font-sans">Requested access</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleRejectMember(m.uid)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-amber-700 hover:bg-amber-100 transition-colors"
+                    >
+                      Reject
+                    </button>
+                    <button 
+                      onClick={() => handleApproveMember(m.uid)}
+                      className="bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-amber-700 transition-colors shadow-sm"
+                    >
+                      Approve
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-[#5A5A40]/60 font-sans">
+            <Users className="w-3 h-3" />
+            Group Members
+          </h3>
+          <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold uppercase tracking-widest">
+            <Shield className="w-3 h-3" />
+            Private Group
+          </div>
+        </div>
+
+        <div className="bg-white rounded-[32px] p-6 shadow-sm border border-[#e5e2dd] space-y-4">
+          {approvedMembers.map(m => (
+            <div key={m.uid} className="flex items-center justify-between p-4 rounded-2xl hover:bg-[#fcfbf9] transition-colors border border-transparent hover:border-[#e5e2dd]">
+              <div className="flex items-center gap-4">
+                <Avatar 
+                  url={m.photoURL} 
+                  name={m.displayName} 
+                  className={cn("w-12 h-12", m.uid === user.uid ? "bg-[#5A5A40]" : "bg-[#8a8a6a]")} 
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-lg">{m.displayName}</p>
+                    {m.role === 'admin' && (
+                      <span className="bg-[#5A5A40] text-white text-[8px] px-2 py-0.5 rounded-full uppercase tracking-widest font-bold">Admin</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#5A5A40]/60 italic font-sans">
+                    Joined {format(new Date(m.joinedAt), 'MMM d, yyyy')}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-[#5A5A40]/40 uppercase tracking-widest font-bold mb-1">Status</p>
+                <div className="flex items-center gap-1.5">
+                  <div className={cn("w-1.5 h-1.5 rounded-full", m.lastReadAt && isToday(new Date(m.lastReadAt)) ? "bg-emerald-500" : "bg-amber-400")} />
+                  <span className="text-xs font-medium">{m.lastReadAt && isToday(new Date(m.lastReadAt)) ? 'Active Today' : 'Inactive'}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+          
+          <div className="pt-4 border-t border-[#e5e2dd]">
+            <div className="bg-[#fcfbf9] p-4 rounded-2xl border border-dashed border-[#e5e2dd] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <UserPlus className="w-5 h-5 text-[#5A5A40]/40" />
+                <div>
+                  <p className="text-sm font-bold">Invite Family</p>
+                  <p className="text-[10px] text-[#5A5A40]/60">Share your room code with others</p>
+                </div>
+              </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-[#e5e2dd] font-mono font-bold text-[#5A5A40]">
+                {roomCode}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const needsReminder = (lastRead: string | null) => {
     if (!lastRead) return true;
@@ -282,9 +571,10 @@ export default function App() {
   };
 
   const Dashboard = () => {
-    const stats = members.map(m => {
-      const memberLogs = logs.filter(l => l.member_id === m.id);
-      const confirmedLogs = memberLogs.filter(l => l.confirmed_by_id !== null);
+    const approvedMembers = members.filter(m => m.status === 'approved');
+    const stats = approvedMembers.map(m => {
+      const memberLogs = logs.filter(l => l.memberUid === m.uid);
+      const confirmedLogs = memberLogs.filter(l => l.confirmedByUid !== null);
       return {
         ...m,
         totalChapters: memberLogs.length,
@@ -305,6 +595,7 @@ export default function App() {
         <div className="grid gap-4">
           {stats.map((s, idx) => (
             <motion.div 
+              key={s.uid}
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -313,12 +604,12 @@ export default function App() {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <Avatar 
-                    url={s.avatar_url} 
-                    name={s.name} 
-                    className={cn("w-12 h-12 rounded-2xl shadow-sm", s.id === member.id ? "bg-[#5A5A40]" : "bg-[#8a8a6a]")} 
+                    url={s.photoURL} 
+                    name={s.displayName} 
+                    className={cn("w-12 h-12 rounded-2xl shadow-sm", s.uid === user.uid ? "bg-[#5A5A40]" : "bg-[#8a8a6a]")} 
                   />
                   <div>
-                    <h4 className="font-bold text-lg leading-tight">{s.name}</h4>
+                    <h4 className="font-bold text-lg leading-tight">{s.displayName}</h4>
                     <p className="text-xs text-[#5A5A40]/60 font-sans uppercase tracking-widest font-semibold">
                       {idx === 0 && s.totalChapters > 0 ? '🏆 Leading' : 'Member'}
                     </p>
@@ -344,7 +635,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center justify-between text-[10px] text-[#5A5A40]/50 italic">
                   <span>{s.confirmationRate}% Verified</span>
-                  <span>Last read: {s.last_read_at ? format(new Date(s.last_read_at), 'MMM d') : 'Never'}</span>
+                  <span>Last read: {s.lastReadAt ? format(new Date(s.lastReadAt), 'MMM d') : 'Never'}</span>
                 </div>
               </div>
             </motion.div>
@@ -385,7 +676,7 @@ export default function App() {
               className="relative group"
             >
               <div className="w-10 h-10 bg-[#5A5A40] rounded-full flex items-center justify-center shadow-sm overflow-hidden border-2 border-white">
-                <Avatar url={member.avatar_url} name={member.name} className="w-full h-full bg-[#5A5A40]" />
+                <Avatar url={member.photoURL} name={member.displayName} className="w-full h-full bg-[#5A5A40]" />
               </div>
               <div className="absolute inset-0 bg-black/20 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                 <Camera className="w-4 h-4 text-white" />
@@ -393,28 +684,36 @@ export default function App() {
             </button>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-bold text-lg leading-tight">Room: {roomCode}</h2>
-                <div className={cn(
-                  "w-2 h-2 rounded-full",
-                  isConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500"
-                )} title={isConnected ? "Live Connection Active" : "Disconnected"} />
+                <h2 className="font-bold text-lg leading-tight">{group?.name || 'Loading...'}</h2>
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Live Connection Active" />
               </div>
-              <p className="text-[10px] text-[#5A5A40]/70 uppercase tracking-widest font-sans font-semibold">Welcome, {member.name}</p>
+              <p className="text-[10px] text-[#5A5A40]/70 uppercase tracking-widest font-sans font-semibold">Room: {roomCode}</p>
             </div>
           </div>
-          <button 
-            onClick={handleLogout}
-            className="p-2 hover:bg-[#f5f2ed] rounded-full transition-colors text-[#5A5A40] active:bg-[#e5e2dd]"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setView('members')}
+              className={cn(
+                "p-2 rounded-full transition-colors",
+                view === 'members' ? "bg-[#5A5A40] text-white" : "hover:bg-[#f5f2ed] text-[#5A5A40]"
+              )}
+            >
+              <Users className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={logout}
+              className="p-2 hover:bg-[#f5f2ed] rounded-full transition-colors text-[#5A5A40] active:bg-[#e5e2dd]"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         {/* Mobile Quick Action - Visible only on small screens */}
         <div className="lg:hidden">
-          {view === 'feed' && needsReminder(member.last_read_at) && (
+          {view === 'feed' && needsReminder(member.lastReadAt) && (
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -466,22 +765,22 @@ export default function App() {
               <h3 className="text-sm font-bold uppercase tracking-widest font-sans">Family Members</h3>
             </div>
             <div className="space-y-4">
-              {members.map(m => (
-                <div key={m.id} className="flex items-center justify-between p-3 rounded-2xl hover:bg-[#fcfbf9] transition-colors">
+              {members.filter(m => m.status === 'approved').map(m => (
+                <div key={m.uid} className="flex items-center justify-between p-3 rounded-2xl hover:bg-[#fcfbf9] transition-colors">
                   <div className="flex items-center gap-3">
                     <Avatar 
-                      url={m.avatar_url} 
-                      name={m.name} 
-                      className={cn("w-10 h-10", m.id === member.id ? "bg-[#5A5A40]" : "bg-[#8a8a6a]")} 
+                      url={m.photoURL} 
+                      name={m.displayName} 
+                      className={cn("w-10 h-10", m.uid === user.uid ? "bg-[#5A5A40]" : "bg-[#8a8a6a]")} 
                     />
                     <div>
-                      <p className="font-medium">{m.name}</p>
+                      <p className="font-medium">{m.displayName}</p>
                       <p className="text-xs text-[#5A5A40]/60 italic">
-                        {m.last_read_at ? `Read ${formatDistanceToNow(new Date(m.last_read_at))} ago` : 'No reading logged'}
+                        {m.lastReadAt ? `Read ${formatDistanceToNow(new Date(m.lastReadAt))} ago` : 'No reading logged'}
                       </p>
                     </div>
                   </div>
-                  {needsReminder(m.last_read_at) && (
+                  {needsReminder(m.lastReadAt) && (
                     <div className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-tighter">
                       <Bell className="w-3 h-3" />
                       Remind
@@ -529,33 +828,33 @@ export default function App() {
                       >
                         <div className="flex gap-4">
                           <div className="w-12 h-12 bg-[#f5f2ed] rounded-2xl flex items-center justify-center shrink-0 shadow-inner overflow-hidden">
-                            {log.member_avatar ? (
-                              <img src={log.member_avatar} alt={log.member_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            {log.memberPhoto ? (
+                              <img src={log.memberPhoto} alt={log.memberName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
                               <BookOpen className="text-[#5A5A40] w-6 h-6" />
                             )}
                           </div>
                           <div>
                             <div className="flex items-center gap-2 mb-0.5">
-                              <span className="font-bold text-base">{log.member_name}</span>
+                              <span className="font-bold text-base">{log.memberName}</span>
                               <span className="text-[#5A5A40]/40 text-xs italic">read</span>
                             </div>
                             <p className="text-lg font-semibold text-[#5A5A40] mb-1.5">
                               {log.book} {log.chapter}
                             </p>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#5A5A40]/60 font-sans uppercase tracking-wider font-medium">
-                              <span>{format(new Date(log.read_at), 'MMM d, h:mm a')}</span>
-                              {log.confirmer_name && (
+                              <span>{format(new Date(log.readAt), 'MMM d, h:mm a')}</span>
+                              {log.confirmerName && (
                                 <span className="flex items-center gap-1 text-emerald-600 font-bold">
                                   <ShieldCheck className="w-3 h-3" />
-                                  Confirmed by {log.confirmer_name}
+                                  Confirmed by {log.confirmerName}
                                 </span>
                               )}
                             </div>
                           </div>
                         </div>
 
-                        {!log.confirmed_by_id && log.member_id !== member.id && (
+                        {!log.confirmedByUid && log.memberUid !== user.uid && (
                           <button 
                             onClick={() => handleConfirm(log.id)}
                             className="shrink-0 bg-[#f5f2ed] text-[#5A5A40] p-2.5 rounded-2xl text-xs font-bold hover:bg-[#5A5A40] hover:text-white transition-all active:scale-90"
@@ -570,8 +869,10 @@ export default function App() {
                 </AnimatePresence>
               </div>
             </>
-          ) : (
+          ) : view === 'dashboard' ? (
             <Dashboard />
+          ) : (
+            <MembersView />
           )}
         </div>
       </main>
@@ -625,7 +926,7 @@ export default function App() {
             >
               <h3 className="text-2xl font-bold mb-6">Profile Picture</h3>
               <div className="w-32 h-32 mx-auto bg-[#f5f2ed] rounded-full mb-8 overflow-hidden border-4 border-[#5A5A40]/10">
-                <Avatar url={member.avatar_url} name={member.name} className="w-full h-full" />
+                <Avatar url={member.photoURL} name={member.displayName} className="w-full h-full" />
               </div>
               
               <div className="space-y-3">
