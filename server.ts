@@ -22,6 +22,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_code TEXT,
     name TEXT,
+    avatar_url TEXT,
     last_read_at DATETIME,
     FOREIGN KEY(room_code) REFERENCES rooms(code)
   );
@@ -45,7 +46,7 @@ async function startServer() {
   const wss = new WebSocketServer({ server });
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '5mb' }));
 
   // Room management
   app.post("/api/rooms/join", (req, res) => {
@@ -59,17 +60,27 @@ async function startServer() {
     let member = db.prepare("SELECT * FROM members WHERE room_code = ? AND name = ?").get(code, name);
     if (!member) {
       const result = db.prepare("INSERT INTO members (room_code, name) VALUES (?, ?)").run(code, name);
-      member = { id: result.lastInsertRowid, room_code: code, name };
+      member = { id: result.lastInsertRowid, room_code: code, name, avatar_url: null };
     }
 
     res.json({ member, room_code: code });
+  });
+
+  app.post("/api/members/:id/avatar", (req, res) => {
+    const { id } = req.params;
+    const { avatarUrl, roomCode } = req.body;
+    db.prepare("UPDATE members SET avatar_url = ? WHERE id = ?").run(avatarUrl, id);
+    
+    const member = db.prepare("SELECT * FROM members WHERE id = ?").get(id);
+    broadcast(roomCode, { type: "MEMBER_UPDATED", member });
+    res.json(member);
   });
 
   app.get("/api/rooms/:code/state", (req, res) => {
     const { code } = req.params;
     const members = db.prepare("SELECT * FROM members WHERE room_code = ?").all(code);
     const logs = db.prepare(`
-      SELECT l.*, m.name as member_name, c.name as confirmer_name
+      SELECT l.*, m.name as member_name, m.avatar_url as member_avatar, c.name as confirmer_name
       FROM logs l
       JOIN members m ON l.member_id = m.id
       LEFT JOIN members c ON l.confirmed_by_id = c.id
@@ -87,7 +98,7 @@ async function startServer() {
     db.prepare("UPDATE members SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?").run(memberId);
     
     const log = db.prepare(`
-      SELECT l.*, m.name as member_name
+      SELECT l.*, m.name as member_name, m.avatar_url as member_avatar
       FROM logs l
       JOIN members m ON l.member_id = m.id
       WHERE l.id = ?
@@ -103,7 +114,7 @@ async function startServer() {
     db.prepare("UPDATE logs SET confirmed_by_id = ? WHERE id = ?").run(confirmerId, id);
     
     const log = db.prepare(`
-      SELECT l.*, m.name as member_name, c.name as confirmer_name
+      SELECT l.*, m.name as member_name, m.avatar_url as member_avatar, c.name as confirmer_name
       FROM logs l
       JOIN members m ON l.member_id = m.id
       LEFT JOIN members c ON l.confirmed_by_id = c.id

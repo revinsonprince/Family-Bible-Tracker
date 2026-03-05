@@ -20,6 +20,7 @@ export interface Member {
   id: number;
   room_code: string;
   name: string;
+  avatar_url: string | null;
   last_read_at: string | null;
 }
 
@@ -27,6 +28,7 @@ export interface ReadingLog {
   id: number;
   member_id: number;
   member_name: string;
+  member_avatar: string | null;
   room_code: string;
   book: string;
   chapter: number;
