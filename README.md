@@ -26,14 +26,12 @@ A family-friendly Android app that helps track daily Bible reading habits and ke
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### Installation and Usage
 
-- Android Studio Flamingo or newer
-- Minimum SDK: API 24 (Android 7.0)
-- Target SDK: API 34 (Android 14)
+1. Visit familybibletracker.com
 
-### Installation
+2. Open Menu in Browser
 
-1. Clone the repository
-   ```bash
-   git clone https://github.com/revinsonprince/family-bible-tracker.git
+3. Select add to Home Screen
+
+4. You can also use it as a web page
