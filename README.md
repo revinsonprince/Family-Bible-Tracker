@@ -22,7 +22,7 @@ A family-friendly Android app that helps track daily Bible reading habits and ke
 
 ## 📱 Screenshots
 
-*(Add screenshots here once your app is ready)*
+*(Will be added)*
 
 ## 🚀 Getting Started
 
