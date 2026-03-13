@@ -1,37 +1,20 @@
-# 📖 Family Bible Reading Tracker
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-A family-friendly Android app that helps track daily Bible reading habits and keeps everyone accountable through notifications and reminders.
+# Run and deploy your AI Studio app
 
-## ✨ Features
+This contains everything you need to run your app locally.
 
-- 👨‍👩‍👧‍👦 Track reading status for 4 family members (Dad, Mom, Son, Daughter)
-- ✅ One-tap check-in when someone completes their daily reading
-- 🔔 Real-time notifications when a family member reads
-- ⏰ Automatic daily reminders at 8:00 PM for those who haven't read
-- 📊 View reading history and streaks
-- 🎨 Simple, intuitive Material Design UI
+View your app in AI Studio: https://ai.studio/apps/4d790d79-0ade-45b9-86e7-ca55afcc6f15
 
-## 🛠️ Tech Stack
+## Run Locally
 
-- **Language:** Kotlin
-- **Architecture:** MVVM with Clean Architecture
-- **Local Database:** Room Persistence Library
-- **Background Tasks:** AlarmManager for exact time reminders
-- **Notifications:** NotificationManager with Notification Channels
-- **UI:** Jetpack Compose / XML (specify which one you're using)
+**Prerequisites:**  Node.js
 
-## 📱 Screenshots
 
-*(Will be added)*
-
-## 🚀 Getting Started
-
-### Installation and Usage
-
-1. Visit familybibletracker.com
-
-2. Open Menu in Browser
-
-3. Select add to Home Screen
-
-4. You can also use it as a web page
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

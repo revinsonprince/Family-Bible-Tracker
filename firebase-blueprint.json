@@ -35,10 +35,24 @@
         "book": { "type": "string" },
         "chapter": { "type": "number" },
         "readAt": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string", "description": "Optional notes or reflections on the reading." },
         "confirmedByUid": { "type": "string" },
         "confirmerName": { "type": "string" }
       },
       "required": ["memberUid", "memberName", "book", "chapter", "readAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A comment on a reading log.",
+      "type": "object",
+      "properties": {
+        "memberUid": { "type": "string" },
+        "memberName": { "type": "string" },
+        "memberPhoto": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["memberUid", "memberName", "text", "createdAt"]
     }
   },
   "firestore": {
@@ -53,6 +67,10 @@
     "/groups/{groupId}/logs/{logId}": {
       "schema": "ReadingLog",
       "description": "Reading logs for a specific family group."
+    },
+    "/groups/{groupId}/logs/{logId}/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Comments on a specific reading log."
     }
   }
 }

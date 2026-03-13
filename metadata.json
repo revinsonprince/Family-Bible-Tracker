@@ -1,5 +1,5 @@
 {
   "name": "Family Bible Tracker",
   "description": "A private space for families to track, confirm, and encourage Bible reading together using room codes.",
-  "requestFramePermissions": ["camera"]
+  "requestFramePermissions": []
 }

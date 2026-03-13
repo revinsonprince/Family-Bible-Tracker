@@ -75,7 +75,16 @@ service cloud.firestore {
              data.memberName is string &&
              data.book is string &&
              data.chapter is number &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 1000)) &&
              data.readAt == request.time;
+    }
+
+    function isValidComment(data) {
+      return data.keys().hasAll(['memberUid', 'memberName', 'text', 'createdAt']) &&
+             data.memberUid == request.auth.uid &&
+             data.memberName is string &&
+             data.text is string && data.text.size() > 0 && data.text.size() < 500 &&
+             data.createdAt == request.time;
     }
 
     // ===============================================================
@@ -109,7 +118,7 @@ service cloud.firestore {
       }
 
       match /logs/{logId} {
-        allow read: if isApprovedMember(groupId);
+        allow read: if isMember(groupId);
         allow create: if isApprovedMember(groupId) && isValidLog(request.resource.data);
         allow update: if isApprovedMember(groupId) && (
           // Allow confirmation
@@ -117,6 +126,12 @@ service cloud.firestore {
           request.resource.data.confirmedByUid == request.auth.uid
         );
         allow delete: if isGroupAdmin(groupId) || (resource.data.memberUid == request.auth.uid);
+
+        match /comments/{commentId} {
+          allow read: if isMember(groupId);
+          allow create: if isApprovedMember(groupId) && isValidComment(request.resource.data);
+          allow delete: if isGroupAdmin(groupId) || (resource.data.memberUid == request.auth.uid);
+        }
       }
     }
   }

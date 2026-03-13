@@ -11,18 +11,21 @@ import {
   ShieldCheck,
   Clock,
   Book,
-  Camera,
+  Image,
   Sparkles,
   Loader2,
   Settings,
   Shield,
   UserPlus,
-  LogIn
+  LogIn,
+  MessageSquare,
+  Send,
+  Trash2
 } from 'lucide-react';
 import { format, formatDistanceToNow, isToday } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { BIBLE_BOOKS, type Member, type ReadingLog, type FamilyGroup } from './types';
+import { BIBLE_BOOKS, type Member, type ReadingLog, type FamilyGroup, type ReadingComment } from './types';
 import { GoogleGenAI } from "@google/genai";
 import { auth, db, signInWithGoogle, logout } from './firebase';
 import { 
@@ -51,6 +54,125 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const Avatar = ({ url, name, className }: { url: string | null, name: string, className?: string }) => {
+  if (url) {
+    return (
+      <img 
+        src={url} 
+        alt={name} 
+        className={cn("rounded-full object-cover", className)} 
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+  return (
+    <div className={cn("rounded-full flex items-center justify-center text-white font-bold", className)}>
+      {name ? name[0].toUpperCase() : '?'}
+    </div>
+  );
+};
+
+const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: string, logId: string, currentUser: User, member: Member }) => {
+  const [comments, setComments] = useState<ReadingComment[]>([]);
+  const [text, setText] = useState('');
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  useEffect(() => {
+    const commentsRef = collection(db, 'groups', groupId, 'logs', logId, 'comments');
+    const q = query(commentsRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(q, (snap) => {
+      setComments(snap.docs.map(d => {
+        const data = d.data();
+        return { 
+          id: d.id, 
+          ...data,
+          createdAt: (data.createdAt as Timestamp)?.toDate().toISOString() || new Date().toISOString()
+        } as ReadingComment;
+      }));
+    });
+  }, [groupId, logId]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    try {
+      const commentsRef = collection(db, 'groups', groupId, 'logs', logId, 'comments');
+      await addDoc(commentsRef, {
+        memberUid: currentUser.uid,
+        memberName: member.displayName,
+        memberPhoto: member.photoURL,
+        text: text.trim(),
+        createdAt: serverTimestamp()
+      });
+      setText('');
+      setIsExpanded(true);
+    } catch (err) {
+      console.error('Failed to add comment', err);
+    }
+  };
+
+  const handleDelete = async (commentId: string) => {
+    try {
+      const commentRef = doc(db, 'groups', groupId, 'logs', logId, 'comments', commentId);
+      await deleteDoc(commentRef);
+    } catch (err) {
+      console.error('Failed to delete comment', err);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-[#f5f2ed] pt-4">
+      <button 
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#5A5A40]/40 hover:text-[#5A5A40] transition-colors"
+      >
+        <MessageSquare className="w-3 h-3" />
+        {isExpanded ? 'Hide Comments' : `Comments (${comments.length})`}
+      </button>
+
+      {isExpanded && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-4 space-y-4"
+        >
+          <div className="space-y-3">
+            {comments.map(c => (
+              <div key={c.id} className="flex gap-3 items-start group">
+                <Avatar url={c.memberPhoto} name={c.memberName} className="w-6 h-6 shrink-0 rounded-lg" />
+                <div className="flex-1 bg-[#fcfbf9] p-3 rounded-2xl border border-[#e5e2dd] relative">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-[10px] uppercase tracking-wider text-[#5A5A40]/60">{c.memberName}</span>
+                    {c.memberUid === currentUser.uid && (
+                      <button onClick={() => handleDelete(c.id)} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Trash2 className="w-3 h-3 text-red-400 hover:text-red-600" />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-sm text-[#5A5A40] leading-relaxed">{c.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <input 
+              type="text" 
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Add a comment..."
+              className="flex-1 bg-[#fcfbf9] border border-[#e5e2dd] rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#5A5A40]/20"
+            />
+            <button type="submit" className="bg-[#5A5A40] text-white p-2 rounded-xl hover:bg-[#4a4a34] transition-colors">
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </motion.div>
+      )}
+    </div>
+  );
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(localStorage.getItem('roomCode'));
@@ -60,7 +182,24 @@ export default function App() {
   const [logs, setLogs] = useState<ReadingLog[]>([]);
   
   const [view, setView] = useState<'feed' | 'dashboard' | 'members'>('feed');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [isLogging, setIsLogging] = useState(false);
+
+  const handleLogin = async () => {
+    setIsLoggingIn(true);
+    setLoginError(null);
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      if (error.code !== 'auth/popup-closed-by-user') {
+        console.error('Login failed:', error);
+        setLoginError('Failed to sign in. Please try again.');
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -69,6 +208,7 @@ export default function App() {
   const [codeInput, setCodeInput] = useState('');
   const [selectedBook, setSelectedBook] = useState('Genesis');
   const [chapter, setChapter] = useState('1');
+  const [notesInput, setNotesInput] = useState('');
 
   // Auth state
   useEffect(() => {
@@ -208,6 +348,7 @@ export default function App() {
         memberPhoto: member.photoURL,
         book: selectedBook,
         chapter: parseInt(chapter),
+        notes: notesInput.trim() || null,
         readAt: serverTimestamp(),
         confirmedByUid: null,
         confirmerName: null
@@ -218,6 +359,7 @@ export default function App() {
       });
 
       setIsLogging(false);
+      setNotesInput('');
     } catch (err) {
       console.error('Failed to log reading', err);
     }
@@ -301,24 +443,6 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const Avatar = ({ url, name, className }: { url: string | null, name: string, className?: string }) => {
-    if (url) {
-      return (
-        <img 
-          src={url} 
-          alt={name} 
-          className={cn("rounded-full object-cover", className)} 
-          referrerPolicy="no-referrer"
-        />
-      );
-    }
-    return (
-      <div className={cn("rounded-full flex items-center justify-center text-white font-bold", className)}>
-        {name ? name[0].toUpperCase() : '?'}
-      </div>
-    );
-  };
-
   if (!user) {
     return (
       <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6 font-serif">
@@ -336,15 +460,21 @@ export default function App() {
           </div>
 
           <div className="space-y-4">
+            {loginError && (
+              <div className="bg-red-50 text-red-600 text-xs p-3 rounded-xl border border-red-100 text-center">
+                {loginError}
+              </div>
+            )}
             <button 
-              onClick={signInWithGoogle}
-              className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-medium hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3"
+              onClick={handleLogin}
+              disabled={isLoggingIn}
+              className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-medium hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50"
             >
-              <LogIn className="w-5 h-5" />
-              Sign in with Google
+              {isLoggingIn ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
+              {isLoggingIn ? 'Signing in...' : 'Sign in to Family Bible Tracker'}
             </button>
-            <p className="text-center text-xs text-[#5A5A40]/60 px-4">
-              Join your family group and start tracking your reading journey together.
+            <p className="text-center text-[10px] text-[#5A5A40]/40 px-4 uppercase tracking-widest font-bold">
+              Secure Google Authentication
             </p>
           </div>
         </motion.div>
@@ -679,7 +809,7 @@ export default function App() {
                 <Avatar url={member.photoURL} name={member.displayName} className="w-full h-full bg-[#5A5A40]" />
               </div>
               <div className="absolute inset-0 bg-black/20 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                <Camera className="w-4 h-4 text-white" />
+                <Image className="w-4 h-4 text-white" />
               </div>
             </button>
             <div>
@@ -824,45 +954,60 @@ export default function App() {
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         key={log.id} 
-                        className="bg-white rounded-3xl p-5 shadow-sm border border-[#e5e2dd] flex items-start justify-between gap-3"
+                        className="bg-white rounded-3xl p-5 shadow-sm border border-[#e5e2dd]"
                       >
-                        <div className="flex gap-4">
-                          <div className="w-12 h-12 bg-[#f5f2ed] rounded-2xl flex items-center justify-center shrink-0 shadow-inner overflow-hidden">
-                            {log.memberPhoto ? (
-                              <img src={log.memberPhoto} alt={log.memberName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              <BookOpen className="text-[#5A5A40] w-6 h-6" />
-                            )}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="font-bold text-base">{log.memberName}</span>
-                              <span className="text-[#5A5A40]/40 text-xs italic">read</span>
-                            </div>
-                            <p className="text-lg font-semibold text-[#5A5A40] mb-1.5">
-                              {log.book} {log.chapter}
-                            </p>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#5A5A40]/60 font-sans uppercase tracking-wider font-medium">
-                              <span>{format(new Date(log.readAt), 'MMM d, h:mm a')}</span>
-                              {log.confirmerName && (
-                                <span className="flex items-center gap-1 text-emerald-600 font-bold">
-                                  <ShieldCheck className="w-3 h-3" />
-                                  Confirmed by {log.confirmerName}
-                                </span>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex gap-4">
+                            <div className="w-12 h-12 bg-[#f5f2ed] rounded-2xl flex items-center justify-center shrink-0 shadow-inner overflow-hidden">
+                              {log.memberPhoto ? (
+                                <img src={log.memberPhoto} alt={log.memberName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <BookOpen className="text-[#5A5A40] w-6 h-6" />
                               )}
                             </div>
+                            <div>
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="font-bold text-base">{log.memberName}</span>
+                                <span className="text-[#5A5A40]/40 text-xs italic">read</span>
+                              </div>
+                              <p className="text-lg font-semibold text-[#5A5A40] mb-1.5">
+                                {log.book} {log.chapter}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#5A5A40]/60 font-sans uppercase tracking-wider font-medium">
+                                <span>{format(new Date(log.readAt), 'MMM d, h:mm a')}</span>
+                                {log.confirmerName && (
+                                  <span className="flex items-center gap-1 text-emerald-600 font-bold">
+                                    <ShieldCheck className="w-3 h-3" />
+                                    Confirmed by {log.confirmerName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
+
+                          {!log.confirmedByUid && log.memberUid !== user.uid && (
+                            <button 
+                              onClick={() => handleConfirm(log.id)}
+                              className="shrink-0 bg-[#f5f2ed] text-[#5A5A40] p-2.5 rounded-2xl text-xs font-bold hover:bg-[#5A5A40] hover:text-white transition-all active:scale-90"
+                              title="Confirm Reading"
+                            >
+                              <CheckCircle2 className="w-5 h-5" />
+                            </button>
+                          )}
                         </div>
 
-                        {!log.confirmedByUid && log.memberUid !== user.uid && (
-                          <button 
-                            onClick={() => handleConfirm(log.id)}
-                            className="shrink-0 bg-[#f5f2ed] text-[#5A5A40] p-2.5 rounded-2xl text-xs font-bold hover:bg-[#5A5A40] hover:text-white transition-all active:scale-90"
-                            title="Confirm Reading"
-                          >
-                            <CheckCircle2 className="w-5 h-5" />
-                          </button>
+                        {log.notes && (
+                          <div className="mt-4 bg-[#fcfbf9] p-4 rounded-2xl border border-[#e5e2dd] italic text-sm text-[#5A5A40]/80 leading-relaxed">
+                            "{log.notes}"
+                          </div>
                         )}
+
+                        <CommentSection 
+                          groupId={roomCode} 
+                          logId={log.id} 
+                          currentUser={user} 
+                          member={member} 
+                        />
                       </motion.div>
                     ))
                   )}
@@ -931,7 +1076,7 @@ export default function App() {
               
               <div className="space-y-3">
                 <label className="block w-full bg-[#5A5A40] text-white py-4 rounded-full font-bold cursor-pointer hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2">
-                  <Camera className="w-5 h-5" />
+                  <Image className="w-5 h-5" />
                   Upload Photo
                   <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                 </label>
@@ -999,6 +1144,15 @@ export default function App() {
                       required
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest mb-2">Notes & Reflections</label>
+                  <textarea 
+                    value={notesInput}
+                    onChange={(e) => setNotesInput(e.target.value)}
+                    className="w-full px-4 py-3 rounded-2xl border border-[#e5e2dd] bg-[#fcfbf9] focus:outline-none h-32 resize-none text-sm"
+                    placeholder="What did you learn from this chapter?"
+                  />
                 </div>
                 <div className="flex gap-3 pt-4">
                   <button 

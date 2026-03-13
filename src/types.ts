@@ -34,8 +34,18 @@ export interface ReadingLog {
   book: string;
   chapter: number;
   readAt: string;
+  notes?: string;
   confirmedByUid: string | null;
   confirmerName: string | null;
+}
+
+export interface ReadingComment {
+  id: string;
+  memberUid: string;
+  memberName: string;
+  memberPhoto: string | null;
+  text: string;
+  createdAt: string;
 }
 
 export interface FamilyGroup {
