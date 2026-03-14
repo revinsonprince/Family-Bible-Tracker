@@ -92,7 +92,8 @@ service cloud.firestore {
     // ===============================================================
 
     match /groups/{groupId} {
-      allow read: if isMember(groupId);
+      allow get: if isAuthenticated();
+      allow list: if isMember(groupId);
       allow create: if isAuthenticated() && isValidGroup(request.resource.data);
       allow update: if isGroupAdmin(groupId) && request.resource.data.adminUid == resource.data.adminUid;
 

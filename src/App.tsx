@@ -20,7 +20,8 @@ import {
   LogIn,
   MessageSquare,
   Send,
-  Trash2
+  Trash2,
+  AlertCircle
 } from 'lucide-react';
 import { format, formatDistanceToNow, isToday } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -54,6 +55,71 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const safeDate = (date: any): Date => {
+  if (!date) return new Date();
+  if (date instanceof Timestamp) return date.toDate();
+  if (typeof date === 'string') return new Date(date);
+  if (date instanceof Date) return date;
+  return new Date();
+};
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+const handleFirestoreError = (error: any, operationType: OperationType, path: string | null) => {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  
+  // If permission denied on a group-related path, it might mean the user was removed or group deleted
+  if (error.code === 'permission-denied' && path?.includes('groups/')) {
+    return true; // Signal that we should probably clear the room code
+  }
+  
+  throw new Error(JSON.stringify(errInfo));
+};
+
 const Avatar = ({ url, name, className }: { url: string | null, name: string, className?: string }) => {
   if (url) {
     return (
@@ -72,6 +138,55 @@ const Avatar = ({ url, name, className }: { url: string | null, name: string, cl
   );
 };
 
+class ErrorBoundary extends React.Component<any, any> {
+  public state: any;
+  public props: any;
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let message = "Something went wrong.";
+      try {
+        const parsed = JSON.parse(this.state.error.message);
+        if (parsed.error) message = parsed.error;
+      } catch (e) {
+        message = this.state.error.message || message;
+      }
+
+      return (
+        <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6 font-serif">
+          <div className="max-w-md w-full bg-white rounded-[32px] p-10 shadow-xl border border-[#e5e2dd] text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertCircle className="text-red-600 w-8 h-8" />
+            </div>
+            <h1 className="text-2xl font-bold text-[#1a1a1a] mb-2">Application Error</h1>
+            <p className="text-[#5A5A40]/70 mb-8">{message}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-bold hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95"
+            >
+              Reload App
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: string, logId: string, currentUser: User, member: Member }) => {
   const [comments, setComments] = useState<ReadingComment[]>([]);
   const [text, setText] = useState('');
@@ -80,15 +195,19 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
   useEffect(() => {
     const commentsRef = collection(db, 'groups', groupId, 'logs', logId, 'comments');
     const q = query(commentsRef, orderBy('createdAt', 'asc'));
+    const path = `groups/${groupId}/logs/${logId}/comments`;
+    
     return onSnapshot(q, (snap) => {
       setComments(snap.docs.map(d => {
         const data = d.data();
         return { 
           id: d.id, 
           ...data,
-          createdAt: (data.createdAt as Timestamp)?.toDate().toISOString() || new Date().toISOString()
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
         } as ReadingComment;
       }));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
     });
   }, [groupId, logId]);
 
@@ -107,7 +226,7 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
       setText('');
       setIsExpanded(true);
     } catch (err) {
-      console.error('Failed to add comment', err);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${groupId}/logs/${logId}/comments`);
     }
   };
 
@@ -116,7 +235,7 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
       const commentRef = doc(db, 'groups', groupId, 'logs', logId, 'comments', commentId);
       await deleteDoc(commentRef);
     } catch (err) {
-      console.error('Failed to delete comment', err);
+      handleFirestoreError(err, OperationType.DELETE, `groups/${groupId}/logs/${logId}/comments/${commentId}`);
     }
   };
 
@@ -222,14 +341,29 @@ export default function App() {
   useEffect(() => {
     if (!user || !roomCode) return;
 
+    const handleAccessDenied = () => {
+      setRoomCode(null);
+      localStorage.removeItem('roomCode');
+      setMember(null);
+      setGroup(null);
+    };
+
     // Group info
     const groupRef = doc(db, 'groups', roomCode);
     const unsubGroup = onSnapshot(groupRef, (docSnap) => {
       if (docSnap.exists()) {
-        setGroup({ id: docSnap.id, ...docSnap.data() } as FamilyGroup);
+        const data = docSnap.data();
+        setGroup({ 
+          id: docSnap.id, 
+          ...data,
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate().toISOString() : new Date().toISOString()
+        } as FamilyGroup);
       } else {
-        setRoomCode(null);
-        localStorage.removeItem('roomCode');
+        handleAccessDenied();
+      }
+    }, (error) => {
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}`)) {
+        handleAccessDenied();
       }
     });
 
@@ -237,15 +371,38 @@ export default function App() {
     const memberRef = doc(db, 'groups', roomCode, 'members', user.uid);
     const unsubMember = onSnapshot(memberRef, (docSnap) => {
       if (docSnap.exists()) {
-        setMember({ uid: docSnap.id, ...docSnap.data() } as Member);
+        const data = docSnap.data();
+        setMember({ 
+          uid: docSnap.id, 
+          ...data,
+          joinedAt: data.joinedAt instanceof Timestamp ? data.joinedAt.toDate().toISOString() : new Date().toISOString(),
+          lastReadAt: data.lastReadAt instanceof Timestamp ? data.lastReadAt.toDate().toISOString() : (data.lastReadAt || null)
+        } as Member);
+      } else {
+        // If member doc doesn't exist but roomCode is set, user might have been removed
+        handleAccessDenied();
+      }
+    }, (error) => {
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members/${user.uid}`)) {
+        handleAccessDenied();
       }
     });
 
     // Members list
     const membersRef = collection(db, 'groups', roomCode, 'members');
     const unsubMembers = onSnapshot(membersRef, (snap) => {
-      const mList = snap.docs.map(d => ({ uid: d.id, ...d.data() } as Member));
+      const mList = snap.docs.map(d => {
+        const data = d.data();
+        return { 
+          uid: d.id, 
+          ...data,
+          joinedAt: data.joinedAt instanceof Timestamp ? data.joinedAt.toDate().toISOString() : new Date().toISOString(),
+          lastReadAt: data.lastReadAt instanceof Timestamp ? data.lastReadAt.toDate().toISOString() : (data.lastReadAt || null)
+        } as Member;
+      });
       setMembers(mList);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members`);
     });
 
     // Logs list
@@ -257,10 +414,12 @@ export default function App() {
         return {
           id: d.id,
           ...data,
-          readAt: (data.readAt as Timestamp)?.toDate().toISOString() || new Date().toISOString()
+          readAt: data.readAt instanceof Timestamp ? data.readAt.toDate().toISOString() : new Date().toISOString()
         } as ReadingLog;
       });
       setLogs(lList);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/logs`);
     });
 
     return () => {
@@ -276,10 +435,10 @@ export default function App() {
     if (!user || !groupNameInput) return;
     setIsCreating(true);
 
+    const gCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const groupRef = doc(db, 'groups', gCode);
+    
     try {
-      const gCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const groupRef = doc(db, 'groups', gCode);
-      
       await setDoc(groupRef, {
         name: groupNameInput,
         adminUid: user.uid,
@@ -298,7 +457,7 @@ export default function App() {
       setRoomCode(gCode);
       localStorage.setItem('roomCode', gCode);
     } catch (err) {
-      console.error('Failed to create group', err);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${gCode}`);
     } finally {
       setIsCreating(false);
     }
@@ -309,8 +468,10 @@ export default function App() {
     if (!user || !codeInput) return;
     setIsJoining(true);
 
+    const code = codeInput.toUpperCase();
+    const groupRef = doc(db, 'groups', code);
+    
     try {
-      const groupRef = doc(db, 'groups', codeInput.toUpperCase());
       const gSnap = await getDoc(groupRef);
       
       if (!gSnap.exists()) {
@@ -318,7 +479,7 @@ export default function App() {
         return;
       }
 
-      await setDoc(doc(db, 'groups', codeInput.toUpperCase(), 'members', user.uid), {
+      await setDoc(doc(db, 'groups', code, 'members', user.uid), {
         displayName: user.displayName || 'Anonymous',
         photoURL: user.photoURL,
         role: 'member',
@@ -327,10 +488,10 @@ export default function App() {
         lastReadAt: null
       });
 
-      setRoomCode(codeInput.toUpperCase());
-      localStorage.setItem('roomCode', codeInput.toUpperCase());
+      setRoomCode(code);
+      localStorage.setItem('roomCode', code);
     } catch (err) {
-      console.error('Failed to join group', err);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${code}/members/${user.uid}`);
     } finally {
       setIsJoining(false);
     }
@@ -361,7 +522,7 @@ export default function App() {
       setIsLogging(false);
       setNotesInput('');
     } catch (err) {
-      console.error('Failed to log reading', err);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${roomCode}/logs`);
     }
   };
 
@@ -374,7 +535,7 @@ export default function App() {
         confirmerName: member.displayName
       });
     } catch (err) {
-      console.error('Failed to confirm log', err);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/logs/${logId}`);
     }
   };
 
@@ -386,7 +547,7 @@ export default function App() {
         status: 'approved'
       });
     } catch (err) {
-      console.error('Failed to approve member', err);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${memberUid}`);
     }
   };
 
@@ -396,7 +557,7 @@ export default function App() {
       const memberRef = doc(db, 'groups', roomCode, 'members', memberUid);
       await deleteDoc(memberRef);
     } catch (err) {
-      console.error('Failed to reject member', err);
+      handleFirestoreError(err, OperationType.DELETE, `groups/${roomCode}/members/${memberUid}`);
     }
   };
 
@@ -435,10 +596,14 @@ export default function App() {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64 = reader.result as string;
-      await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
-        photoURL: base64
-      });
-      setIsUpdatingAvatar(false);
+      try {
+        await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+          photoURL: base64
+        });
+        setIsUpdatingAvatar(false);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -697,7 +862,7 @@ export default function App() {
 
   const needsReminder = (lastRead: string | null) => {
     if (!lastRead) return true;
-    return !isToday(new Date(lastRead));
+    return !isToday(safeDate(lastRead));
   };
 
   const Dashboard = () => {
@@ -765,7 +930,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center justify-between text-[10px] text-[#5A5A40]/50 italic">
                   <span>{s.confirmationRate}% Verified</span>
-                  <span>Last read: {s.lastReadAt ? format(new Date(s.lastReadAt), 'MMM d') : 'Never'}</span>
+                  <span>Last read: {s.lastReadAt ? format(safeDate(s.lastReadAt), 'MMM d') : 'Never'}</span>
                 </div>
               </div>
             </motion.div>
@@ -796,8 +961,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f5f2ed] font-serif text-[#1a1a1a] pb-24 lg:pb-6">
-      {/* Header */}
+    <ErrorBoundary>
+      <div className="min-h-screen bg-[#f5f2ed] font-serif text-[#1a1a1a] pb-24 lg:pb-6">
+        {/* Header */}
       <header className="bg-white border-b border-[#e5e2dd] sticky top-0 z-10 px-6 py-4 safe-top">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -906,7 +1072,7 @@ export default function App() {
                     <div>
                       <p className="font-medium">{m.displayName}</p>
                       <p className="text-xs text-[#5A5A40]/60 italic">
-                        {m.lastReadAt ? `Read ${formatDistanceToNow(new Date(m.lastReadAt))} ago` : 'No reading logged'}
+                        {m.lastReadAt ? `Read ${formatDistanceToNow(safeDate(m.lastReadAt))} ago` : 'No reading logged'}
                       </p>
                     </div>
                   </div>
@@ -974,7 +1140,7 @@ export default function App() {
                                 {log.book} {log.chapter}
                               </p>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#5A5A40]/60 font-sans uppercase tracking-wider font-medium">
-                                <span>{format(new Date(log.readAt), 'MMM d, h:mm a')}</span>
+                                <span>{format(safeDate(log.readAt), 'MMM d, h:mm a')}</span>
                                 {log.confirmerName && (
                                   <span className="flex items-center gap-1 text-emerald-600 font-bold">
                                     <ShieldCheck className="w-3 h-3" />
@@ -1174,6 +1340,7 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }
