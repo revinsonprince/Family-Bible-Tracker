@@ -49,7 +49,13 @@ import {
   Timestamp
 } from 'firebase/firestore';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const getAI = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is missing. Please configure it in your environment variables.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -570,6 +576,7 @@ export default function App() {
     if (!user || !roomCode || !member) return;
     setIsGeneratingAvatar(true);
     try {
+      const ai = getAI();
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: {
