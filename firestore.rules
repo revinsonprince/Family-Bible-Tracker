@@ -39,8 +39,10 @@ service cloud.firestore {
     }
 
     function isMember(groupId) {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid
+      );
     }
 
     function isApprovedMember(groupId) {

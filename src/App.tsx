@@ -114,7 +114,8 @@ const handleFirestoreError = (error: any, operationType: OperationType, path: st
   
   // If permission denied on a group-related path, it might mean the user was removed or group deleted
   if (error.code === 'permission-denied' && path?.includes('groups/')) {
-    return true; // Signal that we should probably clear the room code
+    console.warn('Access denied to group path, likely removed from group:', path);
+    return true; 
   }
   
   throw new Error(JSON.stringify(errInfo));
@@ -402,7 +403,9 @@ export default function App() {
       });
       setMembers(mList);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members`);
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members`)) {
+        handleAccessDenied();
+      }
     });
 
     // Logs list
@@ -419,7 +422,9 @@ export default function App() {
       });
       setLogs(lList);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/logs`);
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/logs`)) {
+        handleAccessDenied();
+      }
     });
 
     return () => {
