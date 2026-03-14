@@ -320,7 +320,7 @@ export default function App() {
     } catch (error: any) {
       if (error.code !== 'auth/popup-closed-by-user') {
         console.error('Login failed:', error);
-        setLoginError('Failed to sign in. Please try again.');
+        setLoginError(`Sign-in failed: ${error.message || 'Please try again.'}`);
       }
     } finally {
       setIsLoggingIn(false);
