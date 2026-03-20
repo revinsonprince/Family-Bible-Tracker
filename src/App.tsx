@@ -520,7 +520,7 @@ export default function App() {
         memberPhoto: member.photoURL,
         book: selectedBook,
         chapter: parseInt(chapter),
-        notes: notesInput.trim() || null,
+        notes: notesInput.trim(),
         readAt: serverTimestamp(),
         confirmedByUid: null,
         confirmerName: null
