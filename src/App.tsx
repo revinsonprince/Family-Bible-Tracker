@@ -301,7 +301,11 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [roomCode, setRoomCode] = useState<string | null>(localStorage.getItem('roomCode'));
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [roomCode, setRoomCode] = useState<string | null>(() => {
+    const saved = localStorage.getItem('roomCode');
+    return (saved === 'null' || saved === 'undefined') ? null : saved;
+  });
   const [group, setGroup] = useState<FamilyGroup | null>(null);
   const [member, setMember] = useState<Member | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -313,13 +317,15 @@ export default function App() {
   const [isLogging, setIsLogging] = useState(false);
 
   const handleLogin = async () => {
+    console.log('Starting login process...');
     setIsLoggingIn(true);
     setLoginError(null);
     try {
-      await signInWithGoogle();
+      const u = await signInWithGoogle();
+      console.log('signInWithGoogle returned:', u ? `User: ${u.displayName}` : 'No user');
     } catch (error: any) {
+      console.error('Login error caught in handleLogin:', error);
       if (error.code !== 'auth/popup-closed-by-user') {
-        console.error('Login failed:', error);
         setLoginError(`Sign-in failed: ${error.message || 'Please try again.'}`);
       }
     } finally {
@@ -335,11 +341,23 @@ export default function App() {
   const [selectedBook, setSelectedBook] = useState('Genesis');
   const [chapter, setChapter] = useState('1');
   const [notesInput, setNotesInput] = useState('');
+  
+  console.log('App Render:', { 
+    user: user?.uid, 
+    roomCode, 
+    member: member?.uid, 
+    isAuthLoading,
+    isLoggingIn,
+    loginError
+  });
 
   // Auth state
   useEffect(() => {
+    console.log('Setting up onAuthStateChanged listener');
     const unsubscribe = onAuthStateChanged(auth, (u) => {
+      console.log('Auth state changed:', u ? `User: ${u.displayName} (${u.uid})` : 'No user');
       setUser(u);
+      setIsAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -619,6 +637,17 @@ export default function App() {
     };
     reader.readAsDataURL(file);
   };
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-12 h-12 text-[#5A5A40] animate-spin" />
+          <p className="text-[#5A5A40]/60 italic animate-pulse">Connecting to the Word...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
