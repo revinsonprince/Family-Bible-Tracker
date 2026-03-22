@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   BookOpen, 
   Users, 
@@ -145,7 +145,7 @@ const Avatar = ({ url, name, className }: { url: string | null, name: string, cl
   );
 };
 
-class ErrorBoundary extends React.Component<any, any> {
+export class ErrorBoundary extends React.Component<any, any> {
   public state: any;
   public props: any;
   constructor(props: any) {
@@ -973,9 +973,8 @@ export default function App() {
   };
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen bg-[#f5f2ed] font-serif text-[#1a1a1a] pb-24 lg:pb-6">
-        {/* Header */}
+    <div className="min-h-screen bg-[#f5f2ed] font-serif text-[#1a1a1a] pb-24 lg:pb-6">
+      {/* Header */}
       <header className="bg-white border-b border-[#e5e2dd] sticky top-0 z-10 px-6 py-4 safe-top">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1353,6 +1352,5 @@ export default function App() {
         )}
       </AnimatePresence>
       </div>
-    </ErrorBoundary>
   );
 }
