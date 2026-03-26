@@ -327,9 +327,11 @@ export default function App() {
       const u = await signInWithGoogle();
       console.log('signInWithGoogle returned:', u ? `User: ${u.displayName}` : 'No user');
     } catch (error: any) {
-      console.error('Login error caught in handleLogin:', error);
       if (error.code !== 'auth/popup-closed-by-user') {
+        console.error('Login error caught in handleLogin:', error);
         setLoginError(`Sign-in failed: ${error.message || 'Please try again.'}`);
+      } else {
+        console.log('Login popup closed by user.');
       }
     } finally {
       setIsLoggingIn(false);
