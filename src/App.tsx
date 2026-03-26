@@ -314,6 +314,7 @@ export default function App() {
   const [view, setView] = useState<'feed' | 'dashboard' | 'members'>('feed');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [isLogging, setIsLogging] = useState(false);
 
   const handleLogin = async () => {
@@ -359,7 +360,22 @@ export default function App() {
       setUser(u);
       setIsAuthLoading(false);
     });
-    return () => unsubscribe();
+
+    // Safety timeout: if auth doesn't resolve in 5 seconds, stop loading
+    const timeout = setTimeout(() => {
+      setIsAuthLoading(prev => {
+        if (prev) {
+          console.warn('Auth loading timed out after 5s');
+          return false;
+        }
+        return prev;
+      });
+    }, 5000);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
   }, []);
 
   // Sync with Firestore
@@ -499,12 +515,13 @@ export default function App() {
 
     const code = codeInput.toUpperCase();
     const groupRef = doc(db, 'groups', code);
+    setJoinError(null);
     
     try {
       const gSnap = await getDoc(groupRef);
       
       if (!gSnap.exists()) {
-        alert('Group not found');
+        setJoinError('Group not found. Please check the code.');
         return;
       }
 
@@ -651,39 +668,86 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-[#f5f2ed] flex items-center justify-center p-6 font-serif">
+      <div className="min-h-screen bg-[#f5f2ed] flex flex-col items-center justify-center p-6 font-serif">
         <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-white rounded-[32px] p-10 shadow-xl border border-[#e5e2dd]"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-2xl w-full bg-white rounded-[40px] overflow-hidden shadow-2xl border border-[#e5e2dd] flex flex-col md:flex-row"
         >
-          <div className="flex flex-col items-center mb-8 text-center">
-            <div className="w-16 h-16 bg-[#5A5A40] rounded-full flex items-center justify-center mb-4 shadow-lg">
+          {/* Left Side: Info/Features */}
+          <div className="md:w-1/2 bg-[#5A5A40] p-10 text-white flex flex-col justify-center">
+            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-sm">
               <BookOpen className="text-white w-8 h-8" />
             </div>
-            <h1 className="text-3xl font-bold text-[#1a1a1a] mb-2">Family Bible Tracker</h1>
-            <p className="text-[#5A5A40]/70 italic">Encouraging each other in the Word</p>
+            <h2 className="text-3xl font-bold mb-4 leading-tight">Grow Together in the Word</h2>
+            <p className="text-white/80 mb-8 italic">A private space for families to stay connected through daily scripture reading.</p>
+            
+            <ul className="space-y-4">
+              {[
+                { icon: <CheckCircle2 className="w-5 h-5" />, text: "Track daily reading progress" },
+                { icon: <Users className="w-5 h-5" />, text: "See family activity in real-time" },
+                { icon: <MessageSquare className="w-5 h-5" />, text: "Encourage with comments" },
+                { icon: <Sparkles className="w-5 h-5" />, text: "AI-generated custom avatars" }
+              ].map((feature, i) => (
+                <motion.li 
+                  key={i}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.2 + i * 0.1 }}
+                  className="flex items-center gap-3 text-sm font-medium"
+                >
+                  <span className="text-white/40">{feature.icon}</span>
+                  {feature.text}
+                </motion.li>
+              ))}
+            </ul>
           </div>
 
-          <div className="space-y-4">
-            {loginError && (
-              <div className="bg-red-50 text-red-600 text-xs p-3 rounded-xl border border-red-100 text-center">
-                {loginError}
+          {/* Right Side: Login */}
+          <div className="md:w-1/2 p-10 flex flex-col justify-center bg-white">
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-[#1a1a1a] mb-1">Welcome</h1>
+              <p className="text-[#5A5A40]/60 text-sm">Sign in to join your family group</p>
+            </div>
+
+            <div className="space-y-6">
+              {loginError && (
+                <div className="bg-red-50 text-red-600 text-xs p-4 rounded-2xl border border-red-100 flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  {loginError}
+                </div>
+              )}
+              
+              <button 
+                onClick={handleLogin}
+                disabled={isLoggingIn}
+                className="w-full bg-[#5A5A40] text-white py-4 rounded-2xl font-bold hover:bg-[#4a4a34] transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed group"
+              >
+                {isLoggingIn ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <LogIn className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                )}
+                {isLoggingIn ? 'Connecting...' : 'Sign in with Google'}
+              </button>
+
+              <div className="pt-6 border-t border-[#f5f2ed]">
+                <p className="text-center text-[10px] text-[#5A5A40]/40 uppercase tracking-[0.2em] font-black">
+                  Private & Secure
+                </p>
               </div>
-            )}
-            <button 
-              onClick={handleLogin}
-              disabled={isLoggingIn}
-              className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-medium hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50"
-            >
-              {isLoggingIn ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
-              {isLoggingIn ? 'Signing in...' : 'Sign in to Family Bible Tracker'}
-            </button>
-            <p className="text-center text-[10px] text-[#5A5A40]/40 px-4 uppercase tracking-widest font-bold">
-              Secure Google Authentication
-            </p>
+            </div>
           </div>
         </motion.div>
+        
+        <motion.p 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1 }}
+          className="mt-8 text-[#5A5A40]/40 text-xs italic"
+        >
+          "Thy word is a lamp unto my feet, and a light unto my path." — Psalm 119:105
+        </motion.p>
       </div>
     );
   }
@@ -707,6 +771,12 @@ export default function App() {
           <div className="space-y-8">
             <form onSubmit={handleJoinGroup} className="space-y-4">
               <label className="block text-xs font-bold uppercase tracking-widest text-[#5A5A40]/60">Join Existing Group</label>
+              {joinError && (
+                <div className="bg-red-50 text-red-600 text-[10px] p-3 rounded-xl border border-red-100 flex items-center gap-2">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  {joinError}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input 
                   type="text" 
