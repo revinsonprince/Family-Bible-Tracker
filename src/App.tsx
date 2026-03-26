@@ -30,7 +30,6 @@ import { twMerge } from 'tailwind-merge';
 import { BIBLE_BOOKS, type Member, type ReadingLog, type FamilyGroup, type ReadingComment } from './types';
 import { GoogleGenAI } from "@google/genai";
 import { auth, db, signInWithGoogle, logout } from './firebase';
-import { Logo } from './components/Logo';
 import { 
   onAuthStateChanged, 
   User 
@@ -700,7 +699,7 @@ export default function App() {
           {/* Left Side: Info/Features */}
           <div className="md:w-1/2 bg-[#5A5A40] p-10 text-white flex flex-col justify-center">
             <div className="w-20 h-20 bg-white/10 rounded-3xl flex items-center justify-center mb-8 backdrop-blur-sm border border-white/10 shadow-inner">
-              <Logo className="w-14 h-14" />
+              <BookOpen className="w-14 h-14 text-white/40" />
             </div>
             <h2 className="text-3xl font-bold mb-4 leading-tight">Grow Together in the Word</h2>
             <p className="text-white/80 mb-8 italic">A private space for families to stay connected through daily scripture reading.</p>
@@ -785,7 +784,7 @@ export default function App() {
         >
           <div className="flex flex-col items-center mb-8 text-center">
             <div className="w-20 h-20 bg-[#5A5A40]/5 rounded-3xl flex items-center justify-center mb-6 border border-[#5A5A40]/10">
-              <Logo className="w-14 h-14" />
+              <BookOpen className="w-14 h-14 text-[#5A5A40]/40" />
             </div>
             <h1 className="text-2xl font-bold text-[#1a1a1a]">Welcome, {user.displayName}</h1>
             <p className="text-[#5A5A40]/70 italic text-sm">Join or create a family group</p>
@@ -1104,7 +1103,7 @@ export default function App() {
               </div>
             </div>
           </div>
-          <Logo className="absolute -right-8 -bottom-8 w-48 h-48 opacity-10 rotate-12" />
+          <BookOpen className="absolute -right-8 -bottom-8 w-48 h-48 opacity-10 rotate-12" />
         </div>
       </div>
     );
@@ -1116,7 +1115,7 @@ export default function App() {
       <header className="bg-white border-b border-[#e5e2dd] sticky top-0 z-10 px-6 py-4 safe-top">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Logo className="w-10 h-10 hidden sm:block" />
+            <BookOpen className="w-8 h-8 text-[#5A5A40] hidden sm:block" />
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => setIsUpdatingAvatar(true)}
