@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   BookOpen, 
   Users, 
@@ -21,7 +21,8 @@ import {
   MessageSquare,
   Send,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  ShieldAlert
 } from 'lucide-react';
 import { format, formatDistanceToNow, isToday } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -29,6 +30,7 @@ import { twMerge } from 'tailwind-merge';
 import { BIBLE_BOOKS, type Member, type ReadingLog, type FamilyGroup, type ReadingComment } from './types';
 import { GoogleGenAI } from "@google/genai";
 import { auth, db, signInWithGoogle, logout } from './firebase';
+import { Logo } from './components/Logo';
 import { 
   onAuthStateChanged, 
   User 
@@ -597,6 +599,25 @@ export default function App() {
     }
   };
 
+  const handleToggleAdmin = async (targetUid: string, currentRole: string) => {
+    if (!user || !roomCode || member?.role !== 'admin') return;
+    
+    const admins = members.filter(m => m.role === 'admin' && m.status === 'approved');
+    if (targetUid === user.uid && currentRole === 'admin' && admins.length <= 1) {
+      alert("You are the only admin. Please promote someone else before stepping down.");
+      return;
+    }
+
+    try {
+      const memberRef = doc(db, 'groups', roomCode, 'members', targetUid);
+      await updateDoc(memberRef, {
+        role: currentRole === 'admin' ? 'member' : 'admin'
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${targetUid}`);
+    }
+  };
+
   const handleRejectMember = async (memberUid: string) => {
     if (!user || !roomCode || member?.role !== 'admin') return;
     try {
@@ -676,8 +697,8 @@ export default function App() {
         >
           {/* Left Side: Info/Features */}
           <div className="md:w-1/2 bg-[#5A5A40] p-10 text-white flex flex-col justify-center">
-            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mb-6 backdrop-blur-sm">
-              <BookOpen className="text-white w-8 h-8" />
+            <div className="w-20 h-20 bg-white/10 rounded-3xl flex items-center justify-center mb-8 backdrop-blur-sm border border-white/10 shadow-inner">
+              <Logo className="w-14 h-14" />
             </div>
             <h2 className="text-3xl font-bold mb-4 leading-tight">Grow Together in the Word</h2>
             <p className="text-white/80 mb-8 italic">A private space for families to stay connected through daily scripture reading.</p>
@@ -761,8 +782,8 @@ export default function App() {
           className="max-w-md w-full bg-white rounded-[32px] p-10 shadow-xl border border-[#e5e2dd]"
         >
           <div className="flex flex-col items-center mb-8 text-center">
-            <div className="w-12 h-12 bg-[#5A5A40] rounded-full flex items-center justify-center mb-4">
-              <Users className="text-white w-6 h-6" />
+            <div className="w-20 h-20 bg-[#5A5A40]/5 rounded-3xl flex items-center justify-center mb-6 border border-[#5A5A40]/10">
+              <Logo className="w-14 h-14" />
             </div>
             <h1 className="text-2xl font-bold text-[#1a1a1a]">Welcome, {user.displayName}</h1>
             <p className="text-[#5A5A40]/70 italic text-sm">Join or create a family group</p>
@@ -942,12 +963,28 @@ export default function App() {
                   </p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-[10px] text-[#5A5A40]/40 uppercase tracking-widest font-bold mb-1">Status</p>
-                <div className="flex items-center gap-1.5">
-                  <div className={cn("w-1.5 h-1.5 rounded-full", m.lastReadAt && isToday(new Date(m.lastReadAt)) ? "bg-emerald-500" : "bg-amber-400")} />
-                  <span className="text-xs font-medium">{m.lastReadAt && isToday(new Date(m.lastReadAt)) ? 'Active Today' : 'Inactive'}</span>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <p className="text-[10px] text-[#5A5A40]/40 uppercase tracking-widest font-bold mb-1">Status</p>
+                  <div className="flex items-center gap-1.5">
+                    <div className={cn("w-1.5 h-1.5 rounded-full", m.lastReadAt && isToday(new Date(m.lastReadAt)) ? "bg-emerald-500" : "bg-amber-400")} />
+                    <span className="text-xs font-medium">{m.lastReadAt && isToday(new Date(m.lastReadAt)) ? 'Active Today' : 'Inactive'}</span>
+                  </div>
                 </div>
+                {member.role === 'admin' && (
+                  <button
+                    onClick={() => handleToggleAdmin(m.uid, m.role)}
+                    className={cn(
+                      "p-2 rounded-xl transition-all border",
+                      m.role === 'admin' 
+                        ? "bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100" 
+                        : "bg-[#f5f2ed] border-[#e5e2dd] text-[#5A5A40]/40 hover:text-[#5A5A40] hover:border-[#5A5A40]/20"
+                    )}
+                    title={m.role === 'admin' ? "Demote from Admin" : "Promote to Admin"}
+                  >
+                    <ShieldAlert className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -1065,7 +1102,7 @@ export default function App() {
               </div>
             </div>
           </div>
-          <BookOpen className="absolute -right-8 -bottom-8 w-48 h-48 text-white/5 rotate-12" />
+          <Logo className="absolute -right-8 -bottom-8 w-48 h-48 opacity-10 rotate-12" />
         </div>
       </div>
     );
@@ -1076,11 +1113,13 @@ export default function App() {
       {/* Header */}
       <header className="bg-white border-b border-[#e5e2dd] sticky top-0 z-10 px-6 py-4 safe-top">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setIsUpdatingAvatar(true)}
-              className="relative group"
-            >
+          <div className="flex items-center gap-4">
+            <Logo className="w-10 h-10 hidden sm:block" />
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsUpdatingAvatar(true)}
+                className="relative group"
+              >
               <div className="w-10 h-10 bg-[#5A5A40] rounded-full flex items-center justify-center shadow-sm overflow-hidden border-2 border-white">
                 <Avatar url={member.photoURL} name={member.displayName} className="w-full h-full bg-[#5A5A40]" />
               </div>
@@ -1096,7 +1135,8 @@ export default function App() {
               <p className="text-[10px] text-[#5A5A40]/70 uppercase tracking-widest font-sans font-semibold">Room: {roomCode}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+        </div>
+        <div className="flex items-center gap-2">
             <button 
               onClick={() => setView('members')}
               className={cn(

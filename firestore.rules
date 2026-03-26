@@ -67,8 +67,7 @@ service cloud.firestore {
       return data.keys().hasAll(['displayName', 'role', 'status', 'joinedAt']) &&
              data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
              data.role in ['admin', 'member'] &&
-             data.status in ['pending', 'approved'] &&
-             data.joinedAt == request.time;
+             data.status in ['pending', 'approved'];
     }
 
     function isValidLog(data) {
@@ -105,18 +104,20 @@ service cloud.firestore {
           // First member (creator) must be approved admin
           (get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid && 
            request.resource.data.role == 'admin' && 
-           request.resource.data.status == 'approved') ||
+           request.resource.data.status == 'approved' &&
+           request.resource.data.joinedAt == request.time) ||
           // New member joining must be pending member
           (memberUid == request.auth.uid && 
            request.resource.data.role == 'member' && 
-           request.resource.data.status == 'pending')
+           request.resource.data.status == 'pending' &&
+           request.resource.data.joinedAt == request.time)
         ) && isValidMember(request.resource.data);
         
-        allow update: if isGroupAdmin(groupId) || (
+        allow update: if (isGroupAdmin(groupId) || (
           memberUid == request.auth.uid && 
           request.resource.data.role == resource.data.role &&
           request.resource.data.status == resource.data.status
-        );
+        )) && isValidMember(request.resource.data) && request.resource.data.joinedAt == resource.data.joinedAt;
         allow delete: if isGroupAdmin(groupId) || (memberUid == request.auth.uid);
       }
 
