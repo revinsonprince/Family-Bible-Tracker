@@ -70,4 +70,4 @@ The application uses strict Firestore Security Rules to ensure:
 
 ---
 
-Built with ❤️ for families growing together in the Word.
+Built with ❤️ for families growing together in the God.
