@@ -312,11 +312,12 @@ export default function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [logs, setLogs] = useState<ReadingLog[]>([]);
   
-  const [view, setView] = useState<'feed' | 'dashboard' | 'members'>('feed');
+  const [view, setView] = useState<'feed' | 'dashboard' | 'members' | 'settings'>('feed');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [isLogging, setIsLogging] = useState(false);
+  const [nudge, setNudge] = useState<string | null>(null);
 
   const handleLogin = async () => {
     console.log('Starting login process...');
@@ -629,6 +630,25 @@ export default function App() {
     }
   };
 
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !roomCode) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      try {
+        await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+          photoURL: base64
+        });
+        setIsUpdatingAvatar(false);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const generateAvatar = async () => {
     if (!user || !roomCode || !member) return;
     setIsGeneratingAvatar(true);
@@ -658,23 +678,100 @@ export default function App() {
     }
   };
 
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user || !roomCode) return;
+  // Check for nudges
+  useEffect(() => {
+    if (!member || !member.reminderSettings?.enabled) return;
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64 = reader.result as string;
-      try {
-        await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
-          photoURL: base64
-        });
-        setIsUpdatingAvatar(false);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`);
+    const check = () => {
+      const { frequency, time, lastNudgeAt } = member.reminderSettings!;
+      const [hours, minutes] = time.split(':').map(Number);
+      const now = new Date();
+      const targetTime = new Date();
+      targetTime.setHours(hours, minutes, 0, 0);
+
+      if (now < targetTime) return;
+
+      const lastRead = member.lastReadAt ? new Date(member.lastReadAt) : null;
+      const lastNudge = lastNudgeAt ? new Date(lastNudgeAt) : null;
+
+      if (frequency === 'daily') {
+        const alreadyReadToday = lastRead && isToday(lastRead);
+        const alreadyNudgedToday = lastNudge && isToday(lastNudge);
+
+        if (!alreadyReadToday && !alreadyNudgedToday) {
+          setNudge("It's time for your daily Bible reading! Would you like to mark it as complete?");
+        }
+      } else if (frequency === 'weekly') {
+        // Simple weekly check: if last read was more than 7 days ago
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        const readThisWeek = lastRead && lastRead > weekAgo;
+        const nudgedThisWeek = lastNudge && lastNudge > weekAgo;
+
+        if (!readThisWeek && !nudgedThisWeek) {
+          setNudge("Don't forget your weekly Bible reading goal! Ready to dive in?");
+        }
       }
     };
-    reader.readAsDataURL(file);
+
+    check();
+    const interval = setInterval(check, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [member]);
+
+  const handleUpdateReminders = async (enabled: boolean, frequency: 'daily' | 'weekly', time: string) => {
+    if (!user || !roomCode) return;
+    try {
+      await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+        reminderSettings: {
+          enabled,
+          frequency,
+          time,
+          lastNudgeAt: member?.reminderSettings?.lastNudgeAt || null
+        }
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`);
+    }
+  };
+
+  const handleDismissNudge = async () => {
+    if (!user || !roomCode || !member) return;
+    setNudge(null);
+    try {
+      await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+        'reminderSettings.lastNudgeAt': serverTimestamp()
+      });
+    } catch (err) {
+      console.error('Failed to update nudge timestamp', err);
+    }
+  };
+
+  const handleCompleteFromNudge = async () => {
+    if (!user || !roomCode || !member) return;
+    try {
+      const logsRef = collection(db, 'groups', roomCode, 'logs');
+      await addDoc(logsRef, {
+        memberUid: user.uid,
+        memberName: member.displayName,
+        memberPhoto: member.photoURL,
+        book: "Daily Reading",
+        chapter: 1,
+        notes: "Completed via reminder nudge.",
+        readAt: serverTimestamp(),
+        confirmedByUid: null,
+        confirmerName: null
+      });
+
+      await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
+        lastReadAt: serverTimestamp(),
+        'reminderSettings.lastNudgeAt': serverTimestamp()
+      });
+
+      setNudge(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `groups/${roomCode}/logs`);
+    }
   };
 
   if (isAuthLoading) {
@@ -1014,6 +1111,92 @@ export default function App() {
     return !isToday(safeDate(lastRead));
   };
 
+  const SettingsView = () => {
+    const [enabled, setEnabled] = useState(member?.reminderSettings?.enabled || false);
+    const [frequency, setFrequency] = useState<'daily' | 'weekly'>(member?.reminderSettings?.frequency || 'daily');
+    const [time, setTime] = useState(member?.reminderSettings?.time || '08:00');
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-[#5A5A40]/60 font-sans">
+            <Settings className="w-3 h-3" />
+            Reminder Settings
+          </h3>
+        </div>
+
+        <div className="bg-white rounded-[32px] p-8 shadow-sm border border-[#e5e2dd] space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-bold text-lg">Enable Reminders</p>
+              <p className="text-xs text-[#5A5A40]/60">Get nudged when you miss your reading goal</p>
+            </div>
+            <button 
+              onClick={() => setEnabled(!enabled)}
+              className={cn(
+                "w-12 h-6 rounded-full transition-colors relative",
+                enabled ? "bg-emerald-500" : "bg-[#e5e2dd]"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                enabled ? "left-7" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {enabled && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="space-y-6 overflow-hidden"
+              >
+                <div className="space-y-3">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[#5A5A40]/60">Frequency</label>
+                  <div className="flex gap-2">
+                    {['daily', 'weekly'].map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setFrequency(f as any)}
+                        className={cn(
+                          "flex-1 py-3 rounded-2xl font-bold text-sm border transition-all",
+                          frequency === f 
+                            ? "bg-[#5A5A40] text-white border-[#5A5A40]" 
+                            : "bg-white text-[#5A5A40] border-[#e5e2dd] hover:bg-[#fcfbf9]"
+                        )}
+                      >
+                        {f.charAt(0).toUpperCase() + f.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[#5A5A40]/60">Reminder Time</label>
+                  <input 
+                    type="time" 
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className="w-full px-4 py-3 rounded-2xl border border-[#e5e2dd] focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 bg-[#fcfbf9] font-mono font-bold text-lg"
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <button 
+            onClick={() => handleUpdateReminders(enabled, frequency, time)}
+            className="w-full bg-[#5A5A40] text-white py-4 rounded-2xl font-bold hover:bg-[#4a4a34] transition-all shadow-lg active:scale-95"
+          >
+            Save Preferences
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const Dashboard = () => {
     const approvedMembers = members.filter(m => m.status === 'approved');
     const stats = approvedMembers.map(m => {
@@ -1148,6 +1331,15 @@ export default function App() {
               <Users className="w-5 h-5" />
             </button>
             <button 
+              onClick={() => setView('settings')}
+              className={cn(
+                "p-2 rounded-full transition-colors",
+                view === 'settings' ? "bg-[#5A5A40] text-white" : "hover:bg-[#f5f2ed] text-[#5A5A40]"
+              )}
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+            <button 
               onClick={logout}
               className="p-2 hover:bg-[#f5f2ed] rounded-full transition-colors text-[#5A5A40] active:bg-[#e5e2dd]"
             >
@@ -1203,6 +1395,16 @@ export default function App() {
             >
               <Users className="w-4 h-4" />
               Family Dashboard
+            </button>
+            <button 
+              onClick={() => setView('settings')}
+              className={cn(
+                "w-full text-left px-6 py-4 rounded-2xl font-bold text-sm transition-all flex items-center gap-3",
+                view === 'settings' ? "bg-[#5A5A40] text-white shadow-md" : "bg-white text-[#5A5A40] border border-[#e5e2dd] hover:bg-[#fcfbf9]"
+              )}
+            >
+              <Settings className="w-4 h-4" />
+              Reminders
             </button>
           </div>
 
@@ -1333,11 +1535,51 @@ export default function App() {
             </>
           ) : view === 'dashboard' ? (
             <Dashboard />
+          ) : view === 'settings' ? (
+            <SettingsView />
           ) : (
             <MembersView />
           )}
         </div>
       </main>
+
+      {/* Nudge Banner */}
+      <AnimatePresence>
+        {nudge && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-24 left-4 right-4 lg:bottom-8 lg:left-auto lg:right-8 lg:max-w-md z-50"
+          >
+            <div className="bg-[#5A5A40] text-white p-6 rounded-[32px] shadow-2xl border border-white/10 backdrop-blur-md">
+              <div className="flex items-start gap-4 mb-4">
+                <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center shrink-0">
+                  <Bell className="w-6 h-6 animate-bounce" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-lg leading-tight mb-1">Gentle Nudge</h4>
+                  <p className="text-white/80 text-sm italic">{nudge}</p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  onClick={handleCompleteFromNudge}
+                  className="flex-1 bg-white text-[#5A5A40] py-3 rounded-xl font-bold text-sm hover:bg-emerald-50 transition-colors"
+                >
+                  Mark as Read
+                </button>
+                <button 
+                  onClick={handleDismissNudge}
+                  className="px-6 py-3 rounded-xl font-bold text-sm text-white/60 hover:text-white transition-colors"
+                >
+                  Later
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Mobile Bottom Navigation */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e5e2dd] px-6 py-3 pb-8 flex items-center justify-around z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">

@@ -20,7 +20,16 @@
         "photoURL": { "type": "string" },
         "role": { "type": "string", "enum": ["admin", "member"] },
         "status": { "type": "string", "enum": ["pending", "approved"] },
-        "joinedAt": { "type": "string", "format": "date-time" }
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "reminderSettings": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "frequency": { "type": "string", "enum": ["daily", "weekly"] },
+            "time": { "type": "string", "description": "Time in HH:mm format" },
+            "lastNudgeAt": { "type": "string", "format": "date-time" }
+          }
+        }
       },
       "required": ["displayName", "role", "status", "joinedAt"]
     },

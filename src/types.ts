@@ -16,6 +16,13 @@ export const BIBLE_BOOKS = [
   "1 John", "2 John", "3 John", "Jude", "Revelation"
 ];
 
+export interface ReminderSettings {
+  enabled: boolean;
+  frequency: 'daily' | 'weekly';
+  time: string; // "HH:mm"
+  lastNudgeAt: string | null;
+}
+
 export interface Member {
   uid: string;
   displayName: string;
@@ -24,6 +31,7 @@ export interface Member {
   status: 'pending' | 'approved';
   joinedAt: string;
   lastReadAt: string | null;
+  reminderSettings?: ReminderSettings;
 }
 
 export interface ReadingLog {
