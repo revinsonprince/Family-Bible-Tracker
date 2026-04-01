@@ -98,7 +98,7 @@ interface FirestoreErrorInfo {
   }
 }
 
-const handleFirestoreError = (error: any, operationType: OperationType, path: string | null) => {
+const handleFirestoreError = (error: any, operationType: OperationType, path: string | null, setAsyncError?: (e: any) => void) => {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -125,7 +125,12 @@ const handleFirestoreError = (error: any, operationType: OperationType, path: st
     return true; 
   }
   
-  throw new Error(JSON.stringify(errInfo));
+  const finalError = new Error(JSON.stringify(errInfo));
+  if (setAsyncError) {
+    setAsyncError(() => { throw finalError; });
+  } else {
+    throw finalError;
+  }
 };
 
 const Avatar = ({ url, name, className }: { url: string | null, name: string, className?: string }) => {
@@ -195,7 +200,7 @@ export class ErrorBoundary extends React.Component<any, any> {
   }
 }
 
-const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: string, logId: string, currentUser: User, member: Member }) => {
+const CommentSection = ({ groupId, logId, currentUser, member, setAsyncError }: { groupId: string, logId: string, currentUser: User, member: Member, setAsyncError: (e: any) => void }) => {
   const [comments, setComments] = useState<ReadingComment[]>([]);
   const [text, setText] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
@@ -215,7 +220,7 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
         } as ReadingComment;
       }));
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleFirestoreError(error, OperationType.GET, path, setAsyncError);
     });
   }, [groupId, logId]);
 
@@ -234,7 +239,7 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
       setText('');
       setIsExpanded(true);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `groups/${groupId}/logs/${logId}/comments`);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${groupId}/logs/${logId}/comments`, setAsyncError);
     }
   };
 
@@ -243,7 +248,7 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
       const commentRef = doc(db, 'groups', groupId, 'logs', logId, 'comments', commentId);
       await deleteDoc(commentRef);
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `groups/${groupId}/logs/${logId}/comments/${commentId}`);
+      handleFirestoreError(err, OperationType.DELETE, `groups/${groupId}/logs/${logId}/comments/${commentId}`, setAsyncError);
     }
   };
 
@@ -301,6 +306,7 @@ const CommentSection = ({ groupId, logId, currentUser, member }: { groupId: stri
 };
 
 export default function App() {
+  const [_, setAsyncError] = useState<any>();
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [roomCode, setRoomCode] = useState<string | null>(() => {
@@ -341,6 +347,13 @@ export default function App() {
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
   const [groupNameInput, setGroupNameInput] = useState('');
   const [codeInput, setCodeInput] = useState('');
   const [selectedBook, setSelectedBook] = useState('Genesis');
@@ -407,7 +420,7 @@ export default function App() {
         handleAccessDenied();
       }
     }, (error) => {
-      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}`)) {
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}`, setAsyncError)) {
         handleAccessDenied();
       }
     });
@@ -428,7 +441,7 @@ export default function App() {
         handleAccessDenied();
       }
     }, (error) => {
-      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members/${user.uid}`)) {
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members/${user.uid}`, setAsyncError)) {
         handleAccessDenied();
       }
     });
@@ -447,7 +460,7 @@ export default function App() {
       });
       setMembers(mList);
     }, (error) => {
-      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members`)) {
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members`, setAsyncError)) {
         handleAccessDenied();
       }
     });
@@ -466,7 +479,7 @@ export default function App() {
       });
       setLogs(lList);
     }, (error) => {
-      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/logs`)) {
+      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/logs`, setAsyncError)) {
         handleAccessDenied();
       }
     });
@@ -506,7 +519,7 @@ export default function App() {
       setRoomCode(gCode);
       localStorage.setItem('roomCode', gCode);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `groups/${gCode}`);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${gCode}`, setAsyncError);
     } finally {
       setIsCreating(false);
     }
@@ -541,7 +554,7 @@ export default function App() {
       setRoomCode(code);
       localStorage.setItem('roomCode', code);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `groups/${code}/members/${user.uid}`);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${code}/members/${user.uid}`, setAsyncError);
     } finally {
       setIsJoining(false);
     }
@@ -572,7 +585,7 @@ export default function App() {
       setIsLogging(false);
       setNotesInput('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `groups/${roomCode}/logs`);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${roomCode}/logs`, setAsyncError);
     }
   };
 
@@ -585,7 +598,7 @@ export default function App() {
         confirmerName: member.displayName
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/logs/${logId}`);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/logs/${logId}`, setAsyncError);
     }
   };
 
@@ -597,7 +610,7 @@ export default function App() {
         status: 'approved'
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${memberUid}`);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${memberUid}`, setAsyncError);
     }
   };
 
@@ -616,7 +629,7 @@ export default function App() {
         role: currentRole === 'admin' ? 'member' : 'admin'
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${targetUid}`);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${targetUid}`, setAsyncError);
     }
   };
 
@@ -626,7 +639,7 @@ export default function App() {
       const memberRef = doc(db, 'groups', roomCode, 'members', memberUid);
       await deleteDoc(memberRef);
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `groups/${roomCode}/members/${memberUid}`);
+      handleFirestoreError(err, OperationType.DELETE, `groups/${roomCode}/members/${memberUid}`, setAsyncError);
     }
   };
 
@@ -643,7 +656,7 @@ export default function App() {
         });
         setIsUpdatingAvatar(false);
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`);
+        handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`, setAsyncError);
       }
     };
     reader.readAsDataURL(file);
@@ -671,7 +684,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.error('Failed to generate avatar', err);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`, setAsyncError);
     } finally {
       setIsGeneratingAvatar(false);
       setIsUpdatingAvatar(false);
@@ -731,7 +744,7 @@ export default function App() {
         }
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`, setAsyncError);
     }
   };
 
@@ -743,7 +756,7 @@ export default function App() {
         'reminderSettings.lastNudgeAt': serverTimestamp()
       });
     } catch (err) {
-      console.error('Failed to update nudge timestamp', err);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`, setAsyncError);
     }
   };
 
@@ -770,7 +783,7 @@ export default function App() {
 
       setNudge(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `groups/${roomCode}/logs`);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${roomCode}/logs`, setAsyncError);
     }
   };
 
@@ -942,7 +955,7 @@ export default function App() {
             </form>
 
             <button 
-              onClick={logout}
+              onClick={handleLogout}
               className="w-full text-[#5A5A40]/60 text-xs font-bold uppercase tracking-widest hover:text-[#5A5A40] transition-colors"
             >
               Sign Out
@@ -1340,7 +1353,7 @@ export default function App() {
               <Settings className="w-5 h-5" />
             </button>
             <button 
-              onClick={logout}
+              onClick={handleLogout}
               className="p-2 hover:bg-[#f5f2ed] rounded-full transition-colors text-[#5A5A40] active:bg-[#e5e2dd]"
             >
               <LogOut className="w-5 h-5" />
@@ -1526,6 +1539,7 @@ export default function App() {
                           logId={log.id} 
                           currentUser={user} 
                           member={member} 
+                          setAsyncError={setAsyncError}
                         />
                       </motion.div>
                     ))
