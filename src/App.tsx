@@ -22,7 +22,9 @@ import {
   Send,
   Trash2,
   AlertCircle,
-  ShieldAlert
+  ShieldAlert,
+  Copy,
+  Check
 } from 'lucide-react';
 import { format, formatDistanceToNow, isToday } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -148,6 +150,45 @@ const Avatar = ({ url, name, className }: { url: string | null, name: string, cl
     <div className={cn("rounded-full flex items-center justify-center text-white font-bold", className)}>
       {name ? name[0].toUpperCase() : '?'}
     </div>
+  );
+};
+
+const CopyButton = ({ text, className }: { text: string, className?: string }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={cn(
+        "flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all active:scale-95",
+        copied 
+          ? "bg-emerald-500 text-white" 
+          : "bg-[#5A5A40] text-white hover:bg-[#4a4a34]",
+        className
+      )}
+    >
+      {copied ? (
+        <>
+          <Check className="w-3.5 h-3.5" />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Copied!</span>
+        </>
+      ) : (
+        <>
+          <Copy className="w-3.5 h-3.5" />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Copy Code</span>
+        </>
+      )}
+    </button>
   );
 };
 
@@ -1109,8 +1150,11 @@ export default function App() {
                   <p className="text-[10px] text-[#5A5A40]/60">Share your room code with others</p>
                 </div>
               </div>
-              <div className="bg-white px-3 py-1.5 rounded-xl border border-[#e5e2dd] font-mono font-bold text-[#5A5A40]">
-                {roomCode}
+              <div className="flex items-center gap-2">
+                <div className="bg-white px-3 py-1.5 rounded-xl border border-[#e5e2dd] font-mono font-bold text-[#5A5A40]">
+                  {roomCode}
+                </div>
+                <CopyButton text={roomCode} />
               </div>
             </div>
           </div>
@@ -1139,6 +1183,21 @@ export default function App() {
         </div>
 
         <div className="bg-white rounded-[32px] p-8 shadow-sm border border-[#e5e2dd] space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-bold text-lg">Family Room Code</p>
+              <p className="text-xs text-[#5A5A40]/60">Share this code to invite family members</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="bg-[#fcfbf9] px-4 py-2 rounded-2xl border border-[#e5e2dd] font-mono font-bold text-[#5A5A40]">
+                {roomCode}
+              </div>
+              <CopyButton text={roomCode} />
+            </div>
+          </div>
+
+          <div className="h-px bg-[#e5e2dd]" />
+
           <div className="flex items-center justify-between">
             <div>
               <p className="font-bold text-lg">Enable Reminders</p>
@@ -1285,7 +1344,14 @@ export default function App() {
         {/* Room Summary Card */}
         <div className="bg-[#5A5A40] text-white rounded-[32px] p-8 shadow-lg relative overflow-hidden">
           <div className="relative z-10">
-            <h4 className="text-sm font-bold uppercase tracking-[0.2em] mb-4 opacity-70">Room Statistics</h4>
+            <div className="flex items-center justify-between mb-6">
+              <h4 className="text-sm font-bold uppercase tracking-[0.2em] opacity-70">Room Statistics</h4>
+              <div className="flex items-center gap-3 bg-white/10 px-4 py-2 rounded-2xl backdrop-blur-sm border border-white/10">
+                <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Room Code:</span>
+                <span className="font-mono font-bold text-sm">{roomCode}</span>
+                <CopyButton text={roomCode} className="bg-white text-[#5A5A40] hover:bg-white/90" />
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-8">
               <div>
                 <p className="text-4xl font-bold mb-1">{logs.length}</p>
