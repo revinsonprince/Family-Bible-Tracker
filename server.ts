@@ -3,6 +3,7 @@ import { createServer } from "http";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,25 +15,50 @@ async function startServer() {
 
   app.use(express.json({ limit: '5mb' }));
 
-  console.log(`Starting server in ${process.env.NODE_ENV || 'development'} mode`);
+  const isProd = process.env.NODE_ENV === "production";
+  console.log(`Starting server in ${isProd ? 'production' : 'development'} mode`);
 
-  // Vite middleware
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+  let vite: any;
+  if (!isProd) {
+    vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: "spa",
+      appType: "custom",
     });
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      if (req.path.endsWith('.js') || req.path.endsWith('.tsx') || req.path.endsWith('.ts')) {
-        return res.status(404).send('Not found');
-      }
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
   }
+
+  // API routes or other handlers could go here
+
+  // For SPA support: Fallback to index.html
+  app.get("*", async (req, res, next) => {
+    const url = req.originalUrl;
+    
+    // Safety check: if the request is for a script/style that should have been caught by 
+    // static middleware or vite, but wasn't, return a 404 instead of index.html
+    const ext = path.extname(url);
+    if (ext && ext !== '.html') {
+      return res.status(404).end();
+    }
+
+    try {
+      let template: string;
+      if (!isProd) {
+        // In development, load and transform index.html
+        template = fs.readFileSync(path.resolve(__dirname, "index.html"), "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+      } else {
+        // In production, just load index.html from dist
+        template = fs.readFileSync(path.resolve(__dirname, "dist", "index.html"), "utf-8");
+      }
+      res.status(200).set({ "Content-Type": "text/html" }).end(template);
+    } catch (e: any) {
+      if (!isProd) vite.ssrFixStacktrace(e);
+      console.error(e);
+      res.status(500).end(e.message);
+    }
+  });
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
