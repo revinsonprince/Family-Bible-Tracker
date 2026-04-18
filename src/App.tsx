@@ -101,19 +101,20 @@ interface FirestoreErrorInfo {
 }
 
 const handleFirestoreError = (error: any, operationType: OperationType, path: string | null, setAsyncError?: (e: any) => void, setToast?: (t: { message: string, type: 'error' | 'success' | 'info' } | null) => void) => {
+  const errorCode = error?.code;
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: auth.currentUser?.uid || 'anonymous',
+      email: auth.currentUser?.email || 'N/A',
+      emailVerified: auth.currentUser?.emailVerified || false,
+      isAnonymous: auth.currentUser?.isAnonymous || false,
+      tenantId: auth.currentUser?.tenantId || null,
       providerInfo: auth.currentUser?.providerData.map(provider => ({
         providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
+        displayName: provider.displayName || 'N/A',
+        email: provider.email || 'N/A',
+        photoUrl: provider.photoURL || 'N/A'
       })) || []
     },
     operationType,
@@ -123,20 +124,20 @@ const handleFirestoreError = (error: any, operationType: OperationType, path: st
   
   let userMessage = "An unexpected error occurred. Please try again.";
   
-  if (error.code === 'permission-denied') {
+  if (errorCode === 'permission-denied') {
     userMessage = "You don't have permission to perform this action. You might have been removed from the group or the group was deleted.";
     if (path?.includes('groups/')) {
       console.warn('Access denied to group path, likely removed from group:', path);
       if (setToast) setToast({ message: userMessage, type: 'error' });
       return true; 
     }
-  } else if (error.code === 'unavailable') {
+  } else if (errorCode === 'unavailable') {
     userMessage = "The service is temporarily unavailable. Please check your internet connection and try again.";
-  } else if (error.code === 'not-found') {
+  } else if (errorCode === 'not-found') {
     userMessage = "The requested information could not be found.";
-  } else if (error.code === 'resource-exhausted') {
+  } else if (errorCode === 'resource-exhausted') {
     userMessage = "The app's daily limit has been reached. Please try again tomorrow.";
-  } else if (error.code === 'unauthenticated') {
+  } else if (errorCode === 'unauthenticated') {
     userMessage = "Your session has expired. Please sign in again.";
   }
 
@@ -421,7 +422,8 @@ export default function App() {
       const u = await signInWithGoogle();
       console.log('signInWithGoogle returned:', u ? `User: ${u.displayName}` : 'No user');
     } catch (error: any) {
-      if (error.code !== 'auth/popup-closed-by-user') {
+      const errorCode = error?.code;
+      if (errorCode !== 'auth/popup-closed-by-user') {
         console.error('Login error caught in handleLogin:', error);
         setLoginError(`Sign-in failed: ${error.message || 'Please try again.'}`);
       } else {
@@ -771,8 +773,8 @@ export default function App() {
 
     const reader = new FileReader();
     reader.onloadend = async () => {
-      const base64 = reader.result as string;
       try {
+        const base64 = reader.result as string;
         await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
           photoURL: base64
         });
@@ -780,7 +782,12 @@ export default function App() {
         setToast({ message: "Profile picture updated!", type: 'success' });
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `groups/${roomCode}/members/${user.uid}`, setAsyncError, setToast);
+        setIsUpdatingAvatar(false);
       }
+    };
+    reader.onerror = () => {
+      setToast({ message: "Failed to read file.", type: 'error' });
+      setIsUpdatingAvatar(false);
     };
     reader.readAsDataURL(file);
   };
@@ -797,7 +804,10 @@ export default function App() {
         }
       });
 
-      for (const part of response.candidates[0].content.parts) {
+      const candidate = response.candidates?.[0];
+      if (!candidate) throw new Error("No image generated.");
+
+      for (const part of candidate.content.parts) {
         if (part.inlineData) {
           const base64 = `data:image/png;base64,${part.inlineData.data}`;
           await updateDoc(doc(db, 'groups', roomCode, 'members', user.uid), {
