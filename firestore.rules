@@ -2,69 +2,75 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
-    // Assumed Data Model
+    // GLOBAL SAFETY NET
     // ===============================================================
-    //
-    // Collection: /groups/{groupId}
-    // Fields:
-    //   - name: string (required)
-    //   - adminUid: string (required) - UID of creator
-    //   - createdAt: timestamp (required)
-    //
-    // Collection: /groups/{groupId}/members/{memberUid}
-    // Fields:
-    //   - displayName: string (required)
-    //   - photoURL: string (optional)
-    //   - role: string (required, 'admin' or 'member')
-    //   - status: string (required, 'pending' or 'approved')
-    //   - joinedAt: timestamp (required)
-    //   - lastReadAt: timestamp (optional)
-    //   - reminderSettings: object (optional)
-    //     - enabled: bool
-    //     - frequency: string ('daily' or 'weekly')
-    //     - time: string ('HH:mm')
-    //     - lastNudgeAt: timestamp (optional)
-    //
-    // Collection: /groups/{groupId}/logs/{logId}
-    // Fields:
-    //   - memberUid: string (required)
-    //   - memberName: string (required)
-    //   - memberPhoto: string (optional)
-    //   - book: string (required)
-    //   - chapter: number (required)
-    //   - readAt: timestamp (required)
-    //   - confirmedByUid: string (optional)
-    //   - confirmerName: string (optional)
-    //
-    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
 
     // ===============================================================
-    // Helper Functions
+    // PRIMITIVE HELPERS (Phase 3)
     // ===============================================================
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // ===============================================================
+    // MASTER GATES (Pillar 1)
+    // ===============================================================
+    
+    // Checks if the document exists in the members collection for the current user
+    function getMemberDoc(groupId) {
+      return get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+
     function isMember(groupId) {
-      return isAuthenticated() && (
+      return isSignedIn() && (
         exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)) ||
         get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid
       );
     }
 
     function isApprovedMember(groupId) {
-      return isMember(groupId) &&
-        get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.status == 'approved';
+      return isMember(groupId) && (
+        getMemberDoc(groupId).data.status == 'approved' ||
+        get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid
+      );
     }
 
     function isGroupAdmin(groupId) {
-      return isMember(groupId) &&
-        get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.role == 'admin' &&
-        get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.status == 'approved';
+      return isMember(groupId) && (
+        getMemberDoc(groupId).data.role == 'admin' ||
+        get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid
+      ) && (
+        getMemberDoc(groupId).data.status == 'approved' ||
+        get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid
+      );
     }
 
+    // ===============================================================
+    // VALIDATION BLUEPRINTS (Pillar 2)
+    // ===============================================================
+    
     function isValidGroup(data) {
       return data.keys().hasAll(['name', 'adminUid', 'createdAt']) &&
+             data.keys().size() == 3 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.adminUid == request.auth.uid &&
              data.createdAt == request.time;
@@ -74,7 +80,7 @@ service cloud.firestore {
       return data.keys().hasAll(['enabled', 'frequency', 'time']) &&
              data.enabled is bool &&
              data.frequency in ['daily', 'weekly'] &&
-             data.time is string &&
+             data.time is string && data.time.matches('^[0-9]{2}:[0-9]{2}$') &&
              (!('lastNudgeAt' in data) || data.lastNudgeAt == null || data.lastNudgeAt is timestamp);
     }
 
@@ -84,21 +90,24 @@ service cloud.firestore {
              data.role in ['admin', 'member'] &&
              data.status in ['pending', 'approved'] &&
              (!('lastReadAt' in data) || data.lastReadAt == null || data.lastReadAt is timestamp) &&
+             (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() < 120000)) && // Base64 limit
              (!('reminderSettings' in data) || isValidReminderSettings(data.reminderSettings));
     }
 
     function isValidLog(data) {
-      return data.keys().hasAll(['memberUid', 'memberName', 'book', 'chapter', 'readAt']) &&
+      return data.keys().hasAll(['memberUid', 'memberName', 'book', 'chapter', 'readAt', 'confirmedByUid', 'confirmerName']) &&
              data.memberUid == request.auth.uid &&
              data.memberName is string &&
              data.book is string &&
-             data.chapter is number &&
+             data.chapter is number && data.chapter >= 1 &&
              (!('notes' in data) || (data.notes is string && data.notes.size() < 1000)) &&
-             data.readAt == request.time;
+             data.readAt == request.time &&
+             data.confirmedByUid == null &&
+             data.confirmerName == null;
     }
 
     function isValidComment(data) {
-      return data.keys().hasAll(['memberUid', 'memberName', 'text', 'createdAt']) &&
+      return data.keys().hasAll(['memberUid', 'memberName', 'memberPhoto', 'text', 'createdAt']) &&
              data.memberUid == request.auth.uid &&
              data.memberName is string &&
              data.text is string && data.text.size() > 0 && data.text.size() < 500 &&
@@ -106,52 +115,76 @@ service cloud.firestore {
     }
 
     // ===============================================================
-    // Rules
+    // RESOURCE RULES
     // ===============================================================
 
     match /groups/{groupId} {
-      allow get: if isAuthenticated();
-      allow list: if isMember(groupId);
-      allow create: if isAuthenticated() && isValidGroup(request.resource.data);
-      allow update: if isGroupAdmin(groupId) && request.resource.data.adminUid == resource.data.adminUid;
+      allow get: if isSignedIn() && isValidId(groupId);
+      allow list: if isSignedIn(); // Users find groups by code
+      
+      allow create: if isVerified() && isValidId(groupId) && isValidGroup(incoming());
+      allow update: if isGroupAdmin(groupId) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name']) &&
+        incoming().name is string && incoming().name.size() > 0
+      );
 
+      // Members Subcollection
       match /members/{memberUid} {
-        allow read: if isMember(groupId);
-        allow create: if isAuthenticated() && (
-          // First member (creator) must be approved admin
-          (get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid && 
-           request.resource.data.role == 'admin' && 
-           request.resource.data.status == 'approved' &&
-           request.resource.data.joinedAt == request.time) ||
-          // New member joining must be pending member
-          (memberUid == request.auth.uid && 
-           request.resource.data.role == 'member' && 
-           request.resource.data.status == 'pending' &&
-           request.resource.data.joinedAt == request.time)
-        ) && isValidMember(request.resource.data);
+        // OWN Profile: Can always read if signed in (prevents race condition on join)
+        // Group Profile: Can read if already a member
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(memberUid) && (
+          memberUid == request.auth.uid || isMember(groupId)
+        );
         
-        allow update: if (isGroupAdmin(groupId) || (
-          memberUid == request.auth.uid && 
-          request.resource.data.role == resource.data.role &&
-          request.resource.data.status == resource.data.status
-        )) && isValidMember(request.resource.data) && request.resource.data.joinedAt == resource.data.joinedAt;
-        allow delete: if isGroupAdmin(groupId) || (memberUid == request.auth.uid);
+        // List members: Only for group members (Pillar 8 sync)
+        allow list: if isMember(groupId);
+
+        allow create: if isVerified() && memberUid == request.auth.uid && (
+          // Admin creator joining
+          (get(/databases/$(database)/documents/groups/$(groupId)).data.adminUid == request.auth.uid && 
+           incoming().role == 'admin' && 
+           incoming().status == 'approved') ||
+          // Regular user joining
+          (incoming().role == 'member' && 
+           incoming().status == 'pending')
+        ) && isValidMember(incoming()) && incoming().joinedAt == request.time;
+
+        allow update: if isVerified() && (
+          // Admin update: Can approve or change roles
+          (isGroupAdmin(groupId) && 
+           incoming().diff(existing()).affectedKeys().hasAny(['status', 'role'])) ||
+          // User update: Can update photo, name, or settings
+          (memberUid == request.auth.uid && 
+           incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'reminderSettings', 'lastReadAt']) &&
+           incoming().status == existing().status && // Cannot self-approve
+           incoming().role == existing().role      // Cannot self-promote
+          )
+        ) && isValidMember(incoming());
+
+        allow delete: if isGroupAdmin(groupId) || (isVerified() && memberUid == request.auth.uid);
       }
 
+      // Logs Subcollection
       match /logs/{logId} {
-        allow read: if isMember(groupId);
-        allow create: if isApprovedMember(groupId) && isValidLog(request.resource.data);
-        allow update: if isApprovedMember(groupId) && (
-          // Allow confirmation
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedByUid', 'confirmerName']) &&
-          request.resource.data.confirmedByUid == request.auth.uid
-        );
-        allow delete: if isGroupAdmin(groupId) || (resource.data.memberUid == request.auth.uid);
+        allow get: if isMember(groupId) && isValidId(logId);
+        allow list: if isMember(groupId); // Pillar 8: groupId is constant for query
 
+        allow create: if isApprovedMember(groupId) && isValidLog(incoming());
+        
+        allow update: if isVerified() && (
+          // Action: Confirm Reading
+          (incoming().diff(existing()).affectedKeys().hasOnly(['confirmedByUid', 'confirmerName']) &&
+           incoming().confirmedByUid == request.auth.uid &&
+           existing().confirmedByUid == null) // Cannot overwrite existing confirmation
+        );
+        
+        allow delete: if isGroupAdmin(groupId) || (isVerified() && existing().memberUid == request.auth.uid);
+
+        // Comments Subcollection
         match /comments/{commentId} {
-          allow read: if isMember(groupId);
-          allow create: if isApprovedMember(groupId) && isValidComment(request.resource.data);
-          allow delete: if isGroupAdmin(groupId) || (resource.data.memberUid == request.auth.uid);
+          allow read: if isMember(groupId) && (isValidId(commentId) || true); // true for list
+          allow create: if isApprovedMember(groupId) && isValidComment(incoming());
+          allow delete: if isGroupAdmin(groupId) || (isVerified() && existing().memberUid == request.auth.uid);
         }
       }
     }

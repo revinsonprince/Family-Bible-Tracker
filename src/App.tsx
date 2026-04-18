@@ -483,15 +483,23 @@ export default function App() {
     };
   }, []);
 
-  // Sync with Firestore
+  // Sync with Firestore - Basic Info (Group & My Member Doc)
   useEffect(() => {
-    if (!user || !roomCode) return;
+    if (!user || !roomCode) {
+      setGroup(null);
+      setMember(null);
+      setMembers([]);
+      setLogs([]);
+      return;
+    }
 
     const handleAccessDenied = () => {
       setRoomCode(null);
       localStorage.removeItem('roomCode');
       setMember(null);
       setGroup(null);
+      setMembers([]);
+      setLogs([]);
     };
 
     // Group info
@@ -513,7 +521,7 @@ export default function App() {
       }
     });
 
-    // Member info
+    // My Member info
     const memberRef = doc(db, 'groups', roomCode, 'members', user.uid);
     const unsubMember = onSnapshot(memberRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -526,13 +534,35 @@ export default function App() {
         } as Member);
       } else {
         // If member doc doesn't exist but roomCode is set, user might have been removed
-        handleAccessDenied();
+        // or they might be in the middle of joining
+        setMember(null);
       }
     }, (error) => {
-      if (handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members/${user.uid}`, setAsyncError, setToast)) {
-        handleAccessDenied();
-      }
+      // Don't handle access denied here aggressively, let it resolve or fail via group snap
+      handleFirestoreError(error, OperationType.GET, `groups/${roomCode}/members/${user.uid}`, setAsyncError, setToast);
     });
+
+    return () => {
+      unsubGroup();
+      unsubMember();
+    };
+  }, [user, roomCode]);
+
+  // Sync with Firestore - Approved Data (Members List & Logs)
+  useEffect(() => {
+    if (!user || !roomCode || !member || member.status !== 'approved') {
+      setMembers([]);
+      setLogs([]);
+      return;
+    }
+
+    const handleAccessDenied = () => {
+      // If approved state fails, it's serious
+      setRoomCode(null);
+      localStorage.removeItem('roomCode');
+      setMember(null);
+      setGroup(null);
+    };
 
     // Members list
     const membersRef = collection(db, 'groups', roomCode, 'members');
@@ -573,12 +603,10 @@ export default function App() {
     });
 
     return () => {
-      unsubGroup();
-      unsubMember();
       unsubMembers();
       unsubLogs();
     };
-  }, [user, roomCode]);
+  }, [user, roomCode, member?.status]);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
