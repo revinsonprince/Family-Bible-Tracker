@@ -4,6 +4,8 @@
   "description": "Track and confirm family Bible reading.",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait",
+  "categories": ["lifestyle", "education", "productivity"],
   "background_color": "#f5f2ed",
   "theme_color": "#5A5A40",
   "icons": [

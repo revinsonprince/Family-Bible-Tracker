@@ -2,7 +2,9 @@ const CACHE_NAME = 'bible-tracker-v2';
 const ASSETS = [
   '/',
   '/index.html',
-  '/manifest.json'
+  '/manifest.json',
+  'https://img.icons8.com/ios-filled/192/5A5A40/bible.png',
+  'https://img.icons8.com/ios-filled/512/5A5A40/bible.png'
 ];
 
 self.addEventListener('install', (event) => {

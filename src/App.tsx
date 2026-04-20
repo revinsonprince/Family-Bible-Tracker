@@ -1757,7 +1757,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e5e2dd] px-6 py-3 pb-8 flex items-center justify-around z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e5e2dd] px-6 py-3 safe-bottom flex items-center justify-around z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
         <button 
           onClick={() => setView('feed')}
           className={cn(

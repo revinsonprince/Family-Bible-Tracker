@@ -7,9 +7,24 @@
 }
 
 body {
-  @apply bg-[#f5f2ed];
+  @apply bg-[#f5f2ed] antialiased text-[#1a1a1a];
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
 }
 
 .safe-top {
   padding-top: env(safe-area-inset-top, 1rem);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 1rem);
+}
+
+/* Hide scrollbars but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
